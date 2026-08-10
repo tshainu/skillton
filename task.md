@@ -1,7 +1,7 @@
 # Skillton — Update Spec Build Log (round 3)
 
 ## Done
-- [x] Models: gpt-5.6-luna (parse+reason), gpt-realtime-2 (voice), text-embedding-3-small
+- [x] Models: gpt-5.6-terra (parse+reason), gpt-realtime-2.1 (voice), text-embedding-3-small
 - [x] Schema source edits (clients +20 cols, candidates +11, tech +4, 3 new tables)
 - [x] DB migration applied via raw ALTERs (db:push blocked by TTY prompt) — 39/39 ok
 - [x] typecheck green after migration
@@ -216,3 +216,23 @@ Live at **https://skillton.69-169-97-195.sslip.io** with a real trusted cert.
 - **The camera/mic blocker is gone**: headless Chrome on the live URL reports
   `isSecureContext=true` and `getUserMedia` returns audio+video tracks. Live
   interviews can now be run from the VPS.
+
+## Round: reasoning model luna -> terra
+
+- `PARSE_MODEL` and `REASON_MODEL` in `api/agent/gateway.ts` both moved from
+  `openai/gpt-5.6-luna` to `openai/gpt-5.6-terra`. Luna padded thin interview
+  evidence into confident scores, which is the one thing grading must not do.
+- **The id is `terra`, not `tera`.** `openai/gpt-5.6-tera` and eight other
+  spellings all return `Model '...' not found` from the gateway. Probed live
+  before committing.
+- Verified live against the gateway, not just typechecked:
+  - `generateObject` with a nested/enum/array schema — works, 4.6s vs luna 7.6s.
+  - `aiInterviews.regrade` end to end — 200 in 12s, real report written.
+    terra scored `aii_2i4unboy380jw8tz` 30 vs luna 28.3 and dropped
+    responseConsistency 2 -> 1, catching that the CV claims AI/ML while the
+    candidate only discussed sales. Sharper on contradictions.
+  - Copilot streaming with tool calls — `tool-input-available` ->
+    `tool-output-available` -> `finishReason: stop`, no stream errors.
+  - `parseCv` 3.4s and `parseJd` 2.6s, both clean structured output.
+- Deployed; live smoke-tested over HTTPS.
+- Stale `luna` mentions left in `plan-v2.md` on purpose — historical record.
