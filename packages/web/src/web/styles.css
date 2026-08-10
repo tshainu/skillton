@@ -1,0 +1,347 @@
+@import url("https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Poppins:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Skillton — premium black + orange. Dark only. See design.md. */
+
+@theme inline {
+  --font-display: "Sora", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Poppins", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-light: var(--primary-light);
+  --color-primary-dark: var(--primary-dark);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-border: var(--border);
+  --color-border-hover: var(--border-hover);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+}
+
+:root {
+  --radius: 0.75rem;
+
+  --background: #0d0d0d;
+  --foreground: #ffffff;
+  --surface: #141414;
+  --surface-2: #1a1a1a;
+  --card: #1a1a1a;
+  --card-foreground: #ffffff;
+  --popover: #171717;
+  --popover-foreground: #ffffff;
+
+  --primary: #ff6b2b;
+  --primary-foreground: #0d0d0d;
+  --primary-hover: #ff8550;
+  --primary-light: #ff9e74;
+  --primary-dark: #e55a1c;
+
+  --secondary: #1f1f1f;
+  --secondary-foreground: #f5f5f5;
+  --muted: #1c1c1c;
+  --muted-foreground: #a3a3a3;
+  --accent: #262626;
+  --accent-foreground: #ffffff;
+
+  --destructive: #ef4444;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --info: #3b82f6;
+
+  --border: #262626;
+  --border-hover: #333333;
+  --input: #1f1f1f;
+  --ring: #ff6b2b;
+
+  --chart-1: #ff6b2b;
+  --chart-2: #3b82f6;
+  --chart-3: #10b981;
+  --chart-4: #f59e0b;
+  --chart-5: #a855f7;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    color-scheme: dark;
+    background-color: var(--background);
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--primary) 35%, transparent);
+    color: #fff;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0d0d0d;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #2b2b2b;
+    border-radius: 99px;
+    border: 2px solid #0d0d0d;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3d3d3d;
+  }
+
+  input,
+  textarea,
+  select {
+    font-family: var(--font-sans);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: #6b6b6b;
+  }
+}
+
+@layer components {
+  /* Glass surface used by every card and panel. */
+  .glass {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.055) 0%, rgba(255, 255, 255, 0.018) 100%),
+      #131313;
+    backdrop-filter: blur(14px);
+    border: 1px solid var(--border);
+  }
+
+  .glass-hover {
+    transition:
+      border-color 0.18s ease,
+      transform 0.18s ease,
+      background 0.18s ease;
+  }
+  .glass-hover:hover {
+    border-color: var(--border-hover);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.075) 0%, rgba(255, 255, 255, 0.025) 100%),
+      #151515;
+  }
+
+  /* Orange glow reserved for the single primary action on a screen. */
+  .glow-primary {
+    box-shadow:
+      0 0 0 1px rgba(255, 107, 43, 0.35),
+      0 8px 30px -10px rgba(255, 107, 43, 0.55);
+  }
+
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
+  /* Layered page background: mesh + grid, no flat black. */
+  .app-bg {
+    background-color: #0d0d0d;
+    background-image:
+      radial-gradient(900px 500px at 12% -8%, rgba(255, 107, 43, 0.13), transparent 62%),
+      radial-gradient(700px 420px at 96% 4%, rgba(255, 107, 43, 0.06), transparent 60%),
+      radial-gradient(1000px 700px at 50% 115%, rgba(59, 130, 246, 0.05), transparent 65%),
+      linear-gradient(rgba(255, 255, 255, 0.016) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.016) 1px, transparent 1px);
+    background-size:
+      auto,
+      auto,
+      auto,
+      52px 52px,
+      52px 52px;
+  }
+
+  .hairline {
+    background: linear-gradient(90deg, transparent, var(--border) 18%, var(--border) 82%, transparent);
+    height: 1px;
+  }
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Staggered page-load reveal — one orchestrated entrance per page. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rise {
+  animation: rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.rise-1 {
+  animation-delay: 0.04s;
+}
+.rise-2 {
+  animation-delay: 0.1s;
+}
+.rise-3 {
+  animation-delay: 0.16s;
+}
+.rise-4 {
+  animation-delay: 0.22s;
+}
+.rise-5 {
+  animation-delay: 0.28s;
+}
+.rise-6 {
+  animation-delay: 0.34s;
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 107, 43, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 16px rgba(255, 107, 43, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 107, 43, 0);
+  }
+}
+
+.pulse-ring {
+  animation: pulse-ring 1.8s cubic-bezier(0.66, 0, 0, 1) infinite;
+}
+
+@keyframes marquee-x {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+/* ------------------------------------------------------------------ print */
+/* Reports print (and "Save as PDF") on white with the app chrome removed, so
+   the exported document is legible without burning ink on the dark theme. */
+@media print {
+  @page {
+    margin: 14mm;
+    size: A4 landscape;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+
+  aside,
+  header,
+  nav,
+  footer,
+  [data-print-hide],
+  .pulse-ring {
+    display: none !important;
+  }
+
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: none !important;
+  }
+
+  [data-print-root] {
+    color: #111 !important;
+  }
+
+  [data-print-root] * {
+    color: #111 !important;
+    text-shadow: none !important;
+    animation: none !important;
+    transition: none !important;
+  }
+
+  [data-print-root] .glass,
+  [data-print-root] .glass-hover {
+    background: #fff !important;
+    border: 1px solid #d4d4d4 !important;
+    backdrop-filter: none !important;
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+
+  [data-print-root] table {
+    break-inside: auto;
+  }
+
+  [data-print-root] tr {
+    break-inside: avoid;
+  }
+
+  [data-print-root] th,
+  [data-print-root] td {
+    border-color: #d4d4d4 !important;
+  }
+
+  [data-print-root] svg,
+  [data-print-root] canvas {
+    break-inside: avoid;
+  }
+}

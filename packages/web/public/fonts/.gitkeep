@@ -1,0 +1,1 @@
+Put self-hosted font files here (woff2). Served at /fonts/... — reference in CSS as url('/fonts/heading.woff2'), never import font files from src/.

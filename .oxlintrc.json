@@ -1,0 +1,63 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": [
+    "typescript",
+    "unicorn",
+    "oxc",
+    "react",
+    "jsx-a11y",
+    "import"
+  ],
+  "categories": {
+    "correctness": "error"
+  },
+  "jsPlugins": [
+    "./__lint-rules/index.mjs"
+  ],
+  "rules": {
+    "react/react-in-jsx-scope": "off",
+    "template/asset-imports": "error",
+    "template/protected-files": "error"
+  },
+  "overrides": [
+    {
+      "files": [
+        "packages/web/src/api/routes/**/*.ts",
+        "packages/web/src/api/index.ts",
+        "packages/desktop/electron/main.ts",
+        "packages/desktop/electron/ipc.ts",
+        "packages/desktop/electron/preload.ts",
+        "packages/web/src/web/**/*.tsx",
+        "packages/web/src/web/**/*.ts",
+        "packages/mobile/app/**/*.tsx"
+      ],
+      "rules": {
+        "max-lines": [
+          "error",
+          {
+            "max": 2000
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "packages/web/src/web/components/ui/**"
+      ],
+      "rules": {
+        "max-lines": "off"
+      }
+    }
+  ],
+  "ignorePatterns": [
+    "dist/**",
+    "dist-electron/**",
+    ".expo/**",
+    "packages/web/public/runable.js"
+  ],
+  "env": {
+    "builtin": true,
+    "browser": true,
+    "node": true
+  }
+}

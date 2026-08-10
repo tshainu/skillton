@@ -1,0 +1,1 @@
+Put all image files here (png/jpg/webp/svg). Served at /images/... — reference as <img src="/images/hero.png" />, never import image files from src/. Optimized automatically at build time.

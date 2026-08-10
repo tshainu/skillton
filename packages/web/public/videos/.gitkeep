@@ -1,0 +1,1 @@
+Put all video files here (mp4/mov preferred). Served at /videos/... — reference as <video src="/videos/demo.mp4" />, never import video files from src/. Transcoded automatically at build time when needed.

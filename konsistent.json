@@ -1,0 +1,222 @@
+{
+  "$schema": "node_modules/konsistent/konsistent.schema.json",
+  "version": "v1",
+  "conventions": [
+    {
+      "name": "route-files-export-their-feature",
+      "paths": "packages/web/src/api/routes/{feature}.ts",
+      "must": {
+        "export": [
+          "${feature.toCamelCase()}"
+        ]
+      }
+    },
+    {
+      "name": "api-index-composes-router",
+      "paths": "packages/web/src/api/index.ts",
+      "must": {
+        "export": [
+          "router"
+        ],
+        "exportTypes": [
+          "AppRouter",
+          "AppRouterClient"
+        ],
+        "importFrom": [
+          "./__core/app"
+        ]
+      }
+    },
+    {
+      "name": "core-exposes-base-and-createapp",
+      "paths": "packages/web/src/api/__core/app.ts",
+      "must": {
+        "export": [
+          "base",
+          "createApp"
+        ],
+        "exportTypes": [
+          "RpcContext"
+        ]
+      }
+    },
+    {
+      "name": "database-index-only-reexports-client",
+      "paths": "packages/web/src/api/database/index.ts",
+      "must": {
+        "export": [
+          {
+            "name": "db",
+            "from": "./__client"
+          }
+        ]
+      }
+    },
+    {
+      "name": "web-api-client-shape",
+      "paths": "packages/web/src/web/lib/api.ts",
+      "must": {
+        "exportConstants": [
+          "client",
+          "orpc"
+        ]
+      }
+    },
+    {
+      "name": "mobile-api-client-shape",
+      "paths": "packages/mobile/lib/api.ts",
+      "must": {
+        "exportConstants": [
+          "client",
+          "orpc"
+        ]
+      }
+    },
+    {
+      "name": "all-env-vars-must-live-in-the-single-root-env-file",
+      "paths": [
+        ".env.local",
+        ".env.development",
+        ".env.production",
+        ".env.test",
+        ".env.*.local",
+        "packages/web/.env.local",
+        "packages/web/.env.development",
+        "packages/web/.env.production",
+        "packages/web/.env.test",
+        "packages/web/.env.*.local"
+      ],
+      "mustNot": {
+        "haveType": "file"
+      }
+    },
+    {
+      "name": "web-static-assets-must-live-in-packages-web-public",
+      "paths": [
+        "packages/web/src/**/*.{png,jpg,jpeg,gif,webp,avif,svg,ico,mp4,webm,mov,mp3,wav,ogg,woff,woff2,ttf,otf,eot}",
+        "packages/web/assets/**",
+        "packages/web/*.{png,jpg,jpeg,gif,webp,avif,svg,ico,mp4,webm,mov,mp3,wav,ogg,woff,woff2,ttf,otf,eot}"
+      ],
+      "mustNot": {
+        "haveType": "file"
+      }
+    },
+    {
+      "name": "template-managed-files-exist-web",
+      "paths": "packages/web",
+      "must": {
+        "haveType": "directory",
+        "haveFiles": [
+          "public/runable.js",
+          "src/__server.ts",
+          "src/api/__core/app.ts",
+          "src/api/database/__client.ts",
+          "src/web/__main.tsx",
+          "src/web/__vite-env.d.ts",
+          "src/web/types/__analytics.d.ts",
+          "vite/__plugins/asset-optimizer-plugin.ts",
+          "vite/__plugins/hono-dev-plugin.ts",
+          "vite/__plugins/runable-analytics-plugin.ts",
+          "website.config.json"
+        ]
+      }
+    },
+    {
+      "name": "template-managed-files-exist-mobile",
+      "paths": "packages/mobile",
+      "must": {
+        "haveType": "directory",
+        "haveFiles": [
+          "lib/__analytics.ts",
+          "__env.d.ts"
+        ]
+      }
+    },
+    {
+      "name": "mobile-layout-keeps-template-providers",
+      "paths": "packages/mobile/app/_layout.tsx",
+      "must": {
+        "importFrom": [
+          "../lib/__analytics",
+          "../components/ErrorBoundary"
+        ]
+      }
+    },
+    {
+      "name": "template-managed-files-exist-desktop",
+      "paths": "packages/desktop",
+      "must": {
+        "haveType": "directory",
+        "haveFiles": [
+          "electron/__electron-env.d.ts",
+          "electron/__no-renderer.ts"
+        ]
+      }
+    },
+    {
+      "name": "desktop-main-creates-managed-deep-links",
+      "paths": "packages/desktop/electron/main.ts",
+      "must": {
+        "importFrom": [
+          "@runablehq/managed-auth/desktop/main"
+        ]
+      }
+    },
+    {
+      "name": "desktop-preload-exposes-managed-auth-bridge",
+      "paths": "packages/desktop/electron/preload.ts",
+      "must": {
+        "importFrom": [
+          "@runablehq/managed-auth/desktop/preload"
+        ]
+      }
+    },
+    {
+      "name": "web-main-uses-template-bootstrap",
+      "paths": "packages/web/src/web/main.tsx",
+      "must": {
+        "importFrom": [
+          "./__main"
+        ]
+      }
+    },
+    {
+      "name": "web-provider-wires-react-query",
+      "paths": "packages/web/src/web/components/provider.tsx",
+      "must": {
+        "importFrom": [
+          "@tanstack/react-query"
+        ]
+      }
+    },
+    {
+      "name": "web-app-keeps-runable-runtime",
+      "paths": "packages/web/src/web/app.tsx",
+      "must": {
+        "importFrom": [
+          "@runablehq/website-runtime"
+        ]
+      }
+    },
+    {
+      "name": "web-vite-config-keeps-template-plugins",
+      "paths": "packages/web/vite.config.ts",
+      "must": {
+        "importFrom": [
+          "./vite/__plugins/asset-optimizer-plugin",
+          "./vite/__plugins/hono-dev-plugin",
+          "./vite/__plugins/runable-analytics-plugin"
+        ]
+      }
+    },
+    {
+      "name": "web-query-files-build-on-typed-client",
+      "paths": "packages/web/src/web/queries/{feature}.ts",
+      "must": {
+        "importFrom": [
+          "../lib/api"
+        ]
+      }
+    }
+  ]
+}

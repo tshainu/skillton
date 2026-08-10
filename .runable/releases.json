@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "releases": [
+    {
+      "version": "0.1.0",
+      "revision": "71c93619d51dff2f08b1ae84d4b4ee645b1a2626",
+      "released_at": "2026-05-31T00:05:47+05:30",
+      "policy": "required"
+    },
+    {
+      "version": "0.2.0",
+      "policy": "optional",
+      "migration_notes": [
+        "Mobile template gained a themed structure: constants/theme.ts color tokens (light/dark, read via useColors()), hooks/ (use-colors, use-color-scheme), a queries/ folder of data hooks, and a default app/(tabs)/ navigator. app.json now uses userInterfaceStyle: \"automatic\" and tsconfig adds the @/* path alias. Existing apps can keep their current layout; adopt the pieces they need.",
+        "Web queries/ files now export data hooks (useX wrapping useQuery/useMutation) instead of bare *Query option factories; components call the hook directly."
+      ]
+    },
+    {
+      "version": "0.3.0",
+      "policy": "optional",
+      "migration_notes": [
+        "Web static assets (images, videos, fonts, audio) must live in packages/web/public/ and be referenced by absolute URL path (e.g. /images/hero.png); lint now rejects asset files and asset imports under packages/web/src/. Move any existing assets into public/ and update references.",
+        "New template Vite plugin vite/__plugins/asset-optimizer-plugin.ts optimizes all images and videos in the build output (sequential, cached, low resource usage; videos transcode via system ffmpeg when available, otherwise the build warns above 10MB); it must stay imported in vite.config.ts. packages/web gains a sharp devDependency.",
+        "The design brief now lives in a single design.md at the app root covering web, mobile, and desktop (packages/mobile/design.md was removed). The db:studio script was removed — query the database directly instead."
+      ],
+      "verification_commands": [
+        "bun install",
+        "bun run lint",
+        "bun run typecheck",
+        "bun run build"
+      ]
+    }
+  ]
+}
