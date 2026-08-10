@@ -33,30 +33,75 @@ const RUBRIC = dedent`
 `;
 
 const gradedSchema = z.object({
-  communication: z.number().min(0).max(10).describe("Clarity, structure, listening, concision"),
-  confidence: z.number().min(0).max(10).describe("Composure and conviction, not volume"),
-  knowledge: z.number().min(0).max(10).describe("Role-relevant depth actually demonstrated"),
+  communication: z
+    .number()
+    .min(0)
+    .max(10)
+    .describe("Clarity, structure, listening, concision"),
+  confidence: z
+    .number()
+    .min(0)
+    .max(10)
+    .describe("Composure and conviction, not volume"),
+  knowledge: z
+    .number()
+    .min(0)
+    .max(10)
+    .describe("Role-relevant depth actually demonstrated"),
   professionalism: z.number().min(0).max(10),
-  criticalThinking: z.number().min(0).max(10).describe("Reasoning, trade-offs, problem framing"),
-  responseConsistency: z.number().min(0).max(10).describe("Does their story hold up across answers and CV"),
-  summary: z.string().describe("Executive summary, 3-5 sentences, evidence-led"),
-  strengths: z.array(z.string()).max(6).describe("Each grounded in something the candidate said"),
+  criticalThinking: z
+    .number()
+    .min(0)
+    .max(10)
+    .describe("Reasoning, trade-offs, problem framing"),
+  responseConsistency: z
+    .number()
+    .min(0)
+    .max(10)
+    .describe("Does their story hold up across answers and CV"),
+  summary: z
+    .string()
+    .describe("Executive summary, 3-5 sentences, evidence-led"),
+  strengths: z
+    .array(z.string())
+    .max(6)
+    .describe("Each grounded in something the candidate said"),
   weaknesses: z.array(z.string()).max(6),
-  suggestedTechFocus: z.array(z.string()).max(6).describe("What the technical round must probe and why"),
-  selectionReason: z.string().describe("One paragraph: advance or not, and on what evidence"),
+  suggestedTechFocus: z
+    .array(z.string())
+    .max(6)
+    .describe("What the technical round must probe and why"),
+  selectionReason: z
+    .string()
+    .describe("One paragraph: advance or not, and on what evidence"),
   topicCoverage: z
     .array(
       z.object({
-        topic: z.string().describe("The recruiter's question, or the topic if unscripted"),
-        coverage: z.number().min(0).max(100).describe("How completely the candidate answered it"),
-        evidence: z.string().describe("Short verbatim quote from the candidate, or 'not answered'"),
+        topic: z
+          .string()
+          .describe("The recruiter's question, or the topic if unscripted"),
+        coverage: z
+          .number()
+          .min(0)
+          .max(100)
+          .describe("How completely the candidate answered it"),
+        evidence: z
+          .string()
+          .describe(
+            "Short verbatim quote from the candidate, or 'not answered'",
+          ),
       }),
     )
     .max(12),
-  redFlags: z.array(z.string()).max(6).describe("Evasion, contradictions, scripted or read-aloud answers"),
+  redFlags: z
+    .array(z.string())
+    .max(6)
+    .describe("Evasion, contradictions, scripted or read-aloud answers"),
   reliability: z
     .enum(["high", "medium", "low"])
-    .describe("Confidence in this assessment given how much the candidate actually said"),
+    .describe(
+      "Confidence in this assessment given how much the candidate actually said",
+    ),
 });
 
 export type GradedInterview = z.infer<typeof gradedSchema>;
@@ -92,21 +137,29 @@ export function candidateWordCount(transcript: TranscriptTurn[]): number {
 }
 
 /**
- * Minimum candidate speech before a score means anything. Below this the
- * interview is reported as inconclusive rather than graded — a wrong number is
- * worse than an honest gap, because the recruiter acts on it.
+ * Absolute floor. With fewer candidate words than this there is literally
+ * nothing to read, so no numbers are emitted at all.
  */
-const MIN_CANDIDATE_WORDS = 60;
+const MIN_GRADABLE_WORDS = 10;
+
+/**
+ * Below this the transcript is thin: the recruiter still gets the full report
+ * — scores, dimensions, coverage, tech focus — because a short interview is
+ * itself a signal they need to see, but the grader is told to treat it as
+ * limited evidence and reliability is forced to "low".
+ */
+const THIN_TRANSCRIPT_WORDS = 60;
 
 export async function gradeInterview(input: GradeInput): Promise<GradeResult> {
   const words = candidateWordCount(input.transcript);
-  if (words < MIN_CANDIDATE_WORDS) {
+  if (words < MIN_GRADABLE_WORDS) {
     return {
       graded: null,
       candidateWords: words,
-      skipped: `The candidate spoke only ${words} word${words === 1 ? "" : "s"}, which is not enough to assess. Re-run the interview or review the recording.`,
+      skipped: `The candidate said almost nothing (${words} word${words === 1 ? "" : "s"} captured), so there is nothing to assess. Re-run the interview or review the recording.`,
     };
   }
+  const thin = words < THIN_TRANSCRIPT_WORDS;
 
   const dialogue = input.transcript
     .map((t) => `${t.role === "ai" ? "INTERVIEWER" : "CANDIDATE"}: ${t.text}`)
@@ -139,6 +192,17 @@ export async function gradeInterview(input: GradeInput): Promise<GradeResult> {
         - Set reliability to "low" if the candidate said little, answers were
           cut short, or the integrity notes show they were off-screen for a
           meaningful part of the interview.
+        - Always fill every field. If a dimension has no evidence, score it 0-2
+          and say so — never leave the report empty.
+        ${
+          thin
+            ? dedent`
+        - THIN TRANSCRIPT: the candidate spoke very little. Score what is there,
+          keep every unevidenced dimension at 0-2, open the summary by stating
+          plainly that the interview was too short to assess properly and should
+          be re-run, and set reliability to "low".`
+            : ""
+        }
 
         ${RUBRIC}
 
@@ -155,7 +219,16 @@ export async function gradeInterview(input: GradeInput): Promise<GradeResult> {
         ${dialogue.slice(0, 24000)}
       `,
     });
-    return { graded: object, candidateWords: words };
+    /* A thin transcript can never be reported as a confident read, whatever the
+       model claims about itself. */
+    const graded: GradedInterview = thin
+      ? {
+          ...object,
+          reliability: "low",
+          summary: `Only ${words} words of candidate speech were captured, so treat these scores as indicative and re-run the interview before deciding. ${object.summary}`,
+        }
+      : object;
+    return { graded, candidateWords: words };
   } catch (error) {
     return {
       graded: null,

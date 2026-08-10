@@ -5,10 +5,20 @@ import { db } from "../database";
 import * as schema from "../database/schema";
 import { newId, newToken } from "../lib/ids";
 import { base } from "../__core/app";
-import { audit, authed, getSettings, notify, timeline } from "../middleware/auth";
+import {
+  audit,
+  authed,
+  getSettings,
+  notify,
+  timeline,
+} from "../middleware/auth";
 import { summariseProctoring } from "../lib/proctor";
 import { gradeInterview } from "../lib/interview-grade";
-import { interviewInviteEmail, sendEmail, type SendEmailResult } from "../lib/email";
+import {
+  interviewInviteEmail,
+  sendEmail,
+  type SendEmailResult,
+} from "../lib/email";
 
 /** Absolute base URL for candidate-facing links inside emails. */
 function siteUrl(): string {
@@ -30,7 +40,11 @@ async function mailInvite(args: {
   scheduledAt?: Date | null;
 }): Promise<SendEmailResult & { to: string | null }> {
   if (!args.to) {
-    return { sent: false, reason: "This candidate has no email address on file.", to: null };
+    return {
+      sent: false,
+      reason: "This candidate has no email address on file.",
+      to: null,
+    };
   }
   const [agency] = await db
     .select({ name: schema.agencies.name })
@@ -53,6 +67,97 @@ async function mailInvite(args: {
   return { ...result, to: args.to };
 }
 
+/**
+ * Re-runs the assessment for an interview that already has a transcript and
+ * writes the report columns back. Everything else about the row — status,
+ * duration, recordings, proctoring counters — is left untouched, so this is
+ * safe to call at any time on a finished interview.
+ */
+async function regradeStored(row: typeof schema.interviewsAi.$inferSelect) {
+  const [candidate] = await db
+    .select()
+    .from(schema.candidates)
+    .where(eq(schema.candidates.id, row.candidateId))
+    .limit(1);
+  const job = row.jdId
+    ? (
+        await db
+          .select()
+          .from(schema.jobDescriptions)
+          .where(eq(schema.jobDescriptions.id, row.jdId))
+          .limit(1)
+      )[0]
+    : null;
+  const questionSet = row.questionSetId
+    ? (
+        await db
+          .select()
+          .from(schema.aiQuestionSets)
+          .where(eq(schema.aiQuestionSets.id, row.questionSetId))
+          .limit(1)
+      )[0]
+    : undefined;
+
+  const integrity = summariseProctoring({
+    focusLossCount: row.focusLossCount,
+    awaySeconds: row.awaySeconds,
+    timePenaltySeconds: row.timePenaltySeconds,
+    fraudFlags: row.fraudFlags ?? [],
+    positiveSignals: row.positiveSignals ?? [],
+    resumeCount: row.resumeCount,
+  });
+
+  const { graded, skipped } = await gradeInterview({
+    transcript: row.transcript ?? [],
+    questions: questionSet?.questions ?? [],
+    questionSetTitle: questionSet?.jobTitle ?? null,
+    jobTitle: job?.title ?? null,
+    jobSkills: job?.skillsRequired ?? job?.parsed?.skills ?? [],
+    candidateHeadline: candidate?.headline ?? null,
+    candidateExperienceYears: candidate?.experienceYears ?? null,
+    candidateSkills: candidate?.skillsExtracted ?? [],
+    durationSeconds: row.durationSeconds,
+    integrity,
+  });
+
+  await db
+    .update(schema.interviewsAi)
+    .set({
+      assessment: graded
+        ? {
+            communication: graded.communication,
+            confidence: graded.confidence,
+            knowledge: graded.knowledge,
+            professionalism: graded.professionalism,
+            criticalThinking: graded.criticalThinking,
+            responseConsistency: graded.responseConsistency,
+          }
+        : null,
+      aiSummary: [
+        row.status === "terminated"
+          ? "INTERVIEW TERMINATED: ended early by the interview system."
+          : null,
+        graded?.summary ??
+          skipped ??
+          "Interview completed but could not be graded.",
+        graded ? `CONFIDENCE IN THIS ASSESSMENT: ${graded.reliability}` : null,
+        graded?.redFlags?.length
+          ? `RED FLAGS: ${graded.redFlags.join("; ")}`
+          : null,
+        `INTEGRITY: ${integrity}`,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+      strengths: graded?.strengths ?? [],
+      weaknesses: graded?.weaknesses ?? [],
+      suggestedTechFocus: graded?.suggestedTechFocus ?? [],
+      selectionReason: graded?.selectionReason ?? null,
+      topicCoverage: graded?.topicCoverage ?? [],
+    })
+    .where(eq(schema.interviewsAi.id, row.id));
+
+  return { graded, skipped };
+}
 
 /**
  * AI voice interview. Scores are qualitative only — they never enter the
@@ -63,7 +168,8 @@ export const aiInterviews = {
     .input(z.object({ status: z.string().optional() }).optional())
     .handler(async ({ input, context }) => {
       const where = [eq(schema.interviewsAi.agencyId, context.agencyId)];
-      if (input?.status) where.push(eq(schema.interviewsAi.status, input.status));
+      if (input?.status)
+        where.push(eq(schema.interviewsAi.status, input.status));
 
       return db
         .select({
@@ -87,8 +193,14 @@ export const aiInterviews = {
           jobTitle: schema.jobDescriptions.title,
         })
         .from(schema.interviewsAi)
-        .innerJoin(schema.candidates, eq(schema.candidates.id, schema.interviewsAi.candidateId))
-        .leftJoin(schema.jobDescriptions, eq(schema.jobDescriptions.id, schema.interviewsAi.jdId))
+        .innerJoin(
+          schema.candidates,
+          eq(schema.candidates.id, schema.interviewsAi.candidateId),
+        )
+        .leftJoin(
+          schema.jobDescriptions,
+          eq(schema.jobDescriptions.id, schema.interviewsAi.jdId),
+        )
         .where(and(...where))
         .orderBy(desc(schema.interviewsAi.invitedAt))
         .limit(100);
@@ -117,35 +229,42 @@ export const aiInterviews = {
       .orderBy(desc(schema.candidates.updatedAt)),
   ),
 
-  get: authed.input(z.object({ id: z.string() })).handler(async ({ input, context }) => {
-    const [row] = await db
-      .select()
-      .from(schema.interviewsAi)
-      .where(
-        and(eq(schema.interviewsAi.id, input.id), eq(schema.interviewsAi.agencyId, context.agencyId)),
-      )
-      .limit(1);
-    if (!row) throw new ORPCError("NOT_FOUND");
-    const [candidate] = await db
-      .select()
-      .from(schema.candidates)
-      .where(eq(schema.candidates.id, row.candidateId))
-      .limit(1);
-    const job = row.jdId
-      ? (
-          await db
-            .select()
-            .from(schema.jobDescriptions)
-            .where(eq(schema.jobDescriptions.id, row.jdId))
-            .limit(1)
-        )[0]
-      : null;
-    return {
-      interview: row,
-      candidate: candidate ? { ...candidate, cvVector: null, cvText: null } : null,
-      job: job ? { ...job, jdVector: null } : null,
-    };
-  }),
+  get: authed
+    .input(z.object({ id: z.string() }))
+    .handler(async ({ input, context }) => {
+      const [row] = await db
+        .select()
+        .from(schema.interviewsAi)
+        .where(
+          and(
+            eq(schema.interviewsAi.id, input.id),
+            eq(schema.interviewsAi.agencyId, context.agencyId),
+          ),
+        )
+        .limit(1);
+      if (!row) throw new ORPCError("NOT_FOUND");
+      const [candidate] = await db
+        .select()
+        .from(schema.candidates)
+        .where(eq(schema.candidates.id, row.candidateId))
+        .limit(1);
+      const job = row.jdId
+        ? (
+            await db
+              .select()
+              .from(schema.jobDescriptions)
+              .where(eq(schema.jobDescriptions.id, row.jdId))
+              .limit(1)
+          )[0]
+        : null;
+      return {
+        interview: row,
+        candidate: candidate
+          ? { ...candidate, cvVector: null, cvText: null }
+          : null,
+        job: job ? { ...job, jdVector: null } : null,
+      };
+    }),
 
   /** Create an invite with a shareable candidate link. */
   invite: authed
@@ -177,7 +296,8 @@ export const aiInterviews = {
           ),
         )
         .limit(1);
-      if (!candidate) throw new ORPCError("NOT_FOUND", { message: "Candidate not found" });
+      if (!candidate)
+        throw new ORPCError("NOT_FOUND", { message: "Candidate not found" });
 
       /* A set picked in the invite modal is authoritative — it is what the
          interviewer will be told to ask, so it must belong to this agency. */
@@ -193,20 +313,30 @@ export const aiInterviews = {
             ),
           )
           .limit(1);
-        if (!questionSet) throw new ORPCError("NOT_FOUND", { message: "Question set not found" });
+        if (!questionSet)
+          throw new ORPCError("NOT_FOUND", {
+            message: "Question set not found",
+          });
       }
 
       const id = newId("aii");
       const token = newToken();
-      const scheduledAt = input.scheduledAt ? new Date(input.scheduledAt) : null;
+      const scheduledAt = input.scheduledAt
+        ? new Date(input.scheduledAt)
+        : null;
       /* The link must outlive the slot it was booked for, otherwise a candidate
          invited for next month gets an expired link on the day. */
       const expiresAt = new Date(
-        Math.max(Date.now() + input.validDays * 86_400_000, (scheduledAt?.getTime() ?? 0) + 86_400_000),
+        Math.max(
+          Date.now() + input.validDays * 86_400_000,
+          (scheduledAt?.getTime() ?? 0) + 86_400_000,
+        ),
       );
       /* A future send date parks the mail for the scheduler instead of sending. */
       const sendAt = input.sendAt ? new Date(input.sendAt) : null;
-      const queued = Boolean(input.sendEmail && sendAt && sendAt.getTime() > Date.now() + 30_000);
+      const queued = Boolean(
+        input.sendEmail && sendAt && sendAt.getTime() > Date.now() + 30_000,
+      );
       const jdId = input.jdId ?? questionSet?.jdId ?? undefined;
       const inviteTo = input.email ?? candidate.email ?? null;
       await db.insert(schema.interviewsAi).values({
@@ -243,7 +373,8 @@ export const aiInterviews = {
               .limit(1)
           )[0]?.title ?? null)
         : null;
-      const candidateName = `${candidate.firstName} ${candidate.lastName ?? ""}`.trim();
+      const candidateName =
+        `${candidate.firstName} ${candidate.lastName ?? ""}`.trim();
       const mail = queued
         ? {
             sent: false,
@@ -276,11 +407,21 @@ export const aiInterviews = {
         `${questionSet ? `Question set: ${questionSet.jobTitle}. ` : ""}${
           scheduledAt ? `Slot: ${scheduledAt.toLocaleString()}. ` : ""
         }Link valid until ${expiresAt.toLocaleDateString()}${
-          mail.sent ? `. Invitation emailed to ${mail.to}` : queued ? `. Invitation queued for ${sendAt!.toLocaleString()}` : ""
+          mail.sent
+            ? `. Invitation emailed to ${mail.to}`
+            : queued
+              ? `. Invitation queued for ${sendAt!.toLocaleString()}`
+              : ""
         }`,
         context.user.name,
       );
-      await audit(context.user, "ai_interview.invited", "candidate", input.candidateId, { id });
+      await audit(
+        context.user,
+        "ai_interview.invited",
+        "candidate",
+        input.candidateId,
+        { id },
+      );
 
       return {
         id,
@@ -320,9 +461,15 @@ export const aiInterviews = {
       const [row] = await db
         .select()
         .from(schema.interviewsAi)
-        .where(and(eq(schema.interviewsAi.id, input.id), eq(schema.interviewsAi.agencyId, context.agencyId)))
+        .where(
+          and(
+            eq(schema.interviewsAi.id, input.id),
+            eq(schema.interviewsAi.agencyId, context.agencyId),
+          ),
+        )
         .limit(1);
-      if (!row) throw new ORPCError("NOT_FOUND", { message: "Interview not found" });
+      if (!row)
+        throw new ORPCError("NOT_FOUND", { message: "Interview not found" });
 
       let questionSetId = row.questionSetId;
       if (input.questionSetId) {
@@ -336,7 +483,10 @@ export const aiInterviews = {
             ),
           )
           .limit(1);
-        if (!set) throw new ORPCError("NOT_FOUND", { message: "Question set not found" });
+        if (!set)
+          throw new ORPCError("NOT_FOUND", {
+            message: "Question set not found",
+          });
         questionSetId = set.id;
       }
 
@@ -344,9 +494,14 @@ export const aiInterviews = {
          columns are wiped, so re-scheduling a completed interview never destroys
          the report or the recording that came with it. */
       const hadAttempt = Boolean(
-        row.conductedAt || (row.transcript ?? []).length > 0 || row.aiSummary || row.videoUrl,
+        row.conductedAt ||
+        (row.transcript ?? []).length > 0 ||
+        row.aiSummary ||
+        row.videoUrl,
       );
-      const attempts: schema.AiInterviewAttempt[] = [...(row.previousAttempts ?? [])];
+      const attempts: schema.AiInterviewAttempt[] = [
+        ...(row.previousAttempts ?? []),
+      ];
       if (hadAttempt) {
         attempts.push({
           at: Date.now(),
@@ -366,12 +521,19 @@ export const aiInterviews = {
         });
       }
 
-      const scheduledAt = input.scheduledAt ? new Date(input.scheduledAt) : null;
+      const scheduledAt = input.scheduledAt
+        ? new Date(input.scheduledAt)
+        : null;
       const expiresAt = new Date(
-        Math.max(Date.now() + input.validDays * 86_400_000, (scheduledAt?.getTime() ?? 0) + 86_400_000),
+        Math.max(
+          Date.now() + input.validDays * 86_400_000,
+          (scheduledAt?.getTime() ?? 0) + 86_400_000,
+        ),
       );
       const sendAt = input.sendAt ? new Date(input.sendAt) : null;
-      const queued = Boolean(input.sendEmail && sendAt && sendAt.getTime() > Date.now() + 30_000);
+      const queued = Boolean(
+        input.sendEmail && sendAt && sendAt.getTime() > Date.now() + 30_000,
+      );
       const token = newToken();
       await db
         .update(schema.interviewsAi)
@@ -414,7 +576,11 @@ export const aiInterviews = {
 
       await db
         .update(schema.candidates)
-        .set({ currentStatus: "ai_interview_pending", currentStage: "ai_interview", updatedAt: new Date() })
+        .set({
+          currentStatus: "ai_interview_pending",
+          currentStage: "ai_interview",
+          updatedAt: new Date(),
+        })
         .where(eq(schema.candidates.id, row.candidateId));
 
       const [candidate] = await db
@@ -451,7 +617,9 @@ export const aiInterviews = {
           ? await mailInvite({
               agencyId: context.agencyId,
               to: inviteTo,
-              candidateName: `${candidate?.firstName ?? ""} ${candidate?.lastName ?? ""}`.trim() || "there",
+              candidateName:
+                `${candidate?.firstName ?? ""} ${candidate?.lastName ?? ""}`.trim() ||
+                "there",
               jobTitle,
               token,
               expiresAt,
@@ -474,11 +642,21 @@ export const aiInterviews = {
         `${input.reason ?? `New link valid until ${expiresAt.toLocaleDateString()}`}${
           scheduledAt ? `. New slot: ${scheduledAt.toLocaleString()}` : ""
         }${hadAttempt ? ". Previous attempt archived on the report" : ""}${
-          mail.sent ? `. New link emailed to ${mail.to}` : queued ? `. Mail queued for ${sendAt!.toLocaleString()}` : ""
+          mail.sent
+            ? `. New link emailed to ${mail.to}`
+            : queued
+              ? `. Mail queued for ${sendAt!.toLocaleString()}`
+              : ""
         }`,
         context.user.name,
       );
-      await audit(context.user, "ai_interview.rescheduled", "candidate", row.candidateId, { id: row.id });
+      await audit(
+        context.user,
+        "ai_interview.rescheduled",
+        "candidate",
+        row.candidateId,
+        { id: row.id },
+      );
 
       return {
         id: row.id,
@@ -495,80 +673,93 @@ export const aiInterviews = {
     }),
 
   /** Public: the candidate interview room loads its own context by token. */
-  byToken: base.input(z.object({ token: z.string() })).handler(async ({ input }) => {
-    const [row] = await db
-      .select()
-      .from(schema.interviewsAi)
-      .where(eq(schema.interviewsAi.token, input.token))
-      .limit(1);
-    if (!row) throw new ORPCError("NOT_FOUND", { message: "This interview link is not valid" });
-    if (row.expiresAt && row.expiresAt.getTime() < Date.now() && row.status === "pending") {
-      await db
-        .update(schema.interviewsAi)
-        .set({ status: "expired" })
-        .where(eq(schema.interviewsAi.id, row.id));
-      throw new ORPCError("FORBIDDEN", { message: "This interview link has expired" });
-    }
+  byToken: base
+    .input(z.object({ token: z.string() }))
+    .handler(async ({ input }) => {
+      const [row] = await db
+        .select()
+        .from(schema.interviewsAi)
+        .where(eq(schema.interviewsAi.token, input.token))
+        .limit(1);
+      if (!row)
+        throw new ORPCError("NOT_FOUND", {
+          message: "This interview link is not valid",
+        });
+      if (
+        row.expiresAt &&
+        row.expiresAt.getTime() < Date.now() &&
+        row.status === "pending"
+      ) {
+        await db
+          .update(schema.interviewsAi)
+          .set({ status: "expired" })
+          .where(eq(schema.interviewsAi.id, row.id));
+        throw new ORPCError("FORBIDDEN", {
+          message: "This interview link has expired",
+        });
+      }
 
-    const [candidate] = await db
-      .select({
-        firstName: schema.candidates.firstName,
-        lastName: schema.candidates.lastName,
-        headline: schema.candidates.headline,
-        technologies: schema.candidates.technologies,
-        skillsExtracted: schema.candidates.skillsExtracted,
-        experienceYears: schema.candidates.experienceYears,
-      })
-      .from(schema.candidates)
-      .where(eq(schema.candidates.id, row.candidateId))
-      .limit(1);
+      const [candidate] = await db
+        .select({
+          firstName: schema.candidates.firstName,
+          lastName: schema.candidates.lastName,
+          headline: schema.candidates.headline,
+          technologies: schema.candidates.technologies,
+          skillsExtracted: schema.candidates.skillsExtracted,
+          experienceYears: schema.candidates.experienceYears,
+        })
+        .from(schema.candidates)
+        .where(eq(schema.candidates.id, row.candidateId))
+        .limit(1);
 
-    const job = row.jdId
-      ? (
-          await db
-            .select({
-              title: schema.jobDescriptions.title,
-              parsed: schema.jobDescriptions.parsed,
-            })
-            .from(schema.jobDescriptions)
-            .where(eq(schema.jobDescriptions.id, row.jdId))
-            .limit(1)
-        )[0]
-      : null;
+      const job = row.jdId
+        ? (
+            await db
+              .select({
+                title: schema.jobDescriptions.title,
+                parsed: schema.jobDescriptions.parsed,
+              })
+              .from(schema.jobDescriptions)
+              .where(eq(schema.jobDescriptions.id, row.jdId))
+              .limit(1)
+          )[0]
+        : null;
 
-    return {
-      id: row.id,
-      status: row.status,
-      consentGiven: row.consentGiven,
-      identityVerified: row.identityVerified,
-      transcript: row.transcript ?? [],
-      candidate: candidate ?? null,
-      job: job ?? null,
-      scheduledAt: row.scheduledAt,
-      expiresAt: row.expiresAt,
-      /* Resume state: an interview left in progress (browser reload, crash, lost
+      return {
+        id: row.id,
+        status: row.status,
+        consentGiven: row.consentGiven,
+        identityVerified: row.identityVerified,
+        transcript: row.transcript ?? [],
+        candidate: candidate ?? null,
+        job: job ?? null,
+        scheduledAt: row.scheduledAt,
+        expiresAt: row.expiresAt,
+        /* Resume state: an interview left in progress (browser reload, crash, lost
          tab) is picked up where it stopped rather than restarted or lost. */
-      resumable: row.status === "in_progress",
-      startedAt: row.conductedAt,
-      awaySeconds: row.awaySeconds,
-      timePenaltySeconds: row.timePenaltySeconds,
-      resumeCount: row.resumeCount,
-      lastSeenAt: row.lastSeenAt,
-    };
-  }),
+        resumable: row.status === "in_progress",
+        startedAt: row.conductedAt,
+        awaySeconds: row.awaySeconds,
+        timePenaltySeconds: row.timePenaltySeconds,
+        resumeCount: row.resumeCount,
+        lastSeenAt: row.lastSeenAt,
+      };
+    }),
 
   /**
    * Public: the room is alive. Keeps `lastSeenAt` fresh so that if the candidate
    * reloads or their browser dies, the gap can be priced exactly as inactive
    * time rather than being silently forgiven.
    */
-  heartbeat: base.input(z.object({ token: z.string() })).handler(async ({ input }) => {
-    await db
-      .update(schema.interviewsAi)
-      .set({ lastSeenAt: new Date() })
-      .where(eq(schema.interviewsAi.token, input.token));
-    return { ok: true };
-  }),
+  heartbeat: base
+    .input(z.object({ token: z.string() }))
+    .handler(async ({ input }) => {
+      await db
+        .update(schema.interviewsAi)
+        .set({ lastSeenAt: new Date() })
+        .where(eq(schema.interviewsAi.token, input.token));
+      return { ok: true };
+    }),
 
   /**
    * Public: rejoin an interview that is already in progress. The time between the
@@ -576,74 +767,93 @@ export const aiInterviews = {
    * deducted from the remaining window at the agency's penalty multiplier), so a
    * reload is never a free break.
    */
-  resume: base.input(z.object({ token: z.string() })).handler(async ({ input }) => {
-    const [row] = await db
-      .select()
-      .from(schema.interviewsAi)
-      .where(eq(schema.interviewsAi.token, input.token))
-      .limit(1);
-    if (!row) throw new ORPCError("NOT_FOUND", { message: "This interview link is not valid" });
-    if (row.status !== "in_progress") {
-      throw new ORPCError("FORBIDDEN", { message: "This interview is not in progress" });
-    }
+  resume: base
+    .input(z.object({ token: z.string() }))
+    .handler(async ({ input }) => {
+      const [row] = await db
+        .select()
+        .from(schema.interviewsAi)
+        .where(eq(schema.interviewsAi.token, input.token))
+        .limit(1);
+      if (!row)
+        throw new ORPCError("NOT_FOUND", {
+          message: "This interview link is not valid",
+        });
+      if (row.status !== "in_progress") {
+        throw new ORPCError("FORBIDDEN", {
+          message: "This interview is not in progress",
+        });
+      }
 
-    const settings = await getSettings(row.agencyId);
-    const now = Date.now();
-    const gapSeconds = row.lastSeenAt
-      ? Math.max(0, Math.round((now - row.lastSeenAt.getTime()) / 1000))
-      : 0;
-    /* A moment's gap is just a page paint, not an absence. */
-    const away = gapSeconds > 5 ? gapSeconds : 0;
-    const penalty = Math.round(away * settings.aiAwayPenaltyMultiplier);
+      const settings = await getSettings(row.agencyId);
+      const now = Date.now();
+      const gapSeconds = row.lastSeenAt
+        ? Math.max(0, Math.round((now - row.lastSeenAt.getTime()) / 1000))
+        : 0;
+      /* A moment's gap is just a page paint, not an absence. */
+      const away = gapSeconds > 5 ? gapSeconds : 0;
+      const penalty = Math.round(away * settings.aiAwayPenaltyMultiplier);
 
-    await db
-      .update(schema.interviewsAi)
-      .set({
-        resumeCount: row.resumeCount + 1,
-        lastSeenAt: new Date(),
+      await db
+        .update(schema.interviewsAi)
+        .set({
+          resumeCount: row.resumeCount + 1,
+          lastSeenAt: new Date(),
+          awaySeconds: row.awaySeconds + away,
+          timePenaltySeconds: row.timePenaltySeconds + penalty,
+          focusLossCount: row.focusLossCount + (away > 0 ? 1 : 0),
+          fraudFlags:
+            away > 30
+              ? [...new Set([...(row.fraudFlags ?? []), "left_interview"])]
+              : (row.fraudFlags ?? []),
+          proctorEvents: [
+            ...(row.proctorEvents ?? []),
+            {
+              at: now,
+              kind: "resumed",
+              detail: `Candidate rejoined the interview after ${away}s away (attempt ${row.resumeCount + 1})`,
+              flags: away > 30 ? ["left_interview"] : [],
+            },
+          ].slice(-200),
+        })
+        .where(eq(schema.interviewsAi.id, row.id));
+
+      await timeline(
+        row.agencyId,
+        row.candidateId,
+        "ai_interview",
+        "AI interview resumed",
+        `Rejoined after ${away}s away — ${penalty}s deducted from the remaining interview time`,
+        "AI Interviewer",
+      );
+
+      return {
+        ok: true,
+        transcript: row.transcript ?? [],
+        startedAt: row.conductedAt,
         awaySeconds: row.awaySeconds + away,
         timePenaltySeconds: row.timePenaltySeconds + penalty,
-        focusLossCount: row.focusLossCount + (away > 0 ? 1 : 0),
-        fraudFlags: away > 30 ? [...new Set([...(row.fraudFlags ?? []), "left_interview"])] : (row.fraudFlags ?? []),
-        proctorEvents: [
-          ...(row.proctorEvents ?? []),
-          {
-            at: now,
-            kind: "resumed",
-            detail: `Candidate rejoined the interview after ${away}s away (attempt ${row.resumeCount + 1})`,
-            flags: away > 30 ? ["left_interview"] : [],
-          },
-        ].slice(-200),
-      })
-      .where(eq(schema.interviewsAi.id, row.id));
-
-    await timeline(
-      row.agencyId,
-      row.candidateId,
-      "ai_interview",
-      "AI interview resumed",
-      `Rejoined after ${away}s away — ${penalty}s deducted from the remaining interview time`,
-      "AI Interviewer",
-    );
-
-    return {
-      ok: true,
-      transcript: row.transcript ?? [],
-      startedAt: row.conductedAt,
-      awaySeconds: row.awaySeconds + away,
-      timePenaltySeconds: row.timePenaltySeconds + penalty,
-      gapSeconds: away,
-      resumeCount: row.resumeCount + 1,
-    };
-  }),
+        gapSeconds: away,
+        resumeCount: row.resumeCount + 1,
+      };
+    }),
 
   /** Public: identity + camera/mic consent gate. */
   consent: base
-    .input(z.object({ token: z.string(), identityVerified: z.boolean(), consentGiven: z.boolean() }))
+    .input(
+      z.object({
+        token: z.string(),
+        identityVerified: z.boolean(),
+        consentGiven: z.boolean(),
+      }),
+    )
     .handler(async ({ input }) => {
       await db
         .update(schema.interviewsAi)
-        .set({ identityVerified: input.identityVerified, consentGiven: input.consentGiven })
+        .set({
+          identityVerified: input.identityVerified,
+          consentGiven: input.consentGiven,
+        })
         .where(eq(schema.interviewsAi.token, input.token));
       return { ok: true };
     }),
@@ -675,23 +885,35 @@ export const aiInterviews = {
         .limit(1);
       if (!row) throw new ORPCError("NOT_FOUND");
 
-      const missing = [!input.camera ? "camera" : null, !input.microphone ? "microphone" : null]
+      const missing = [
+        !input.camera ? "camera" : null,
+        !input.microphone ? "microphone" : null,
+      ]
         .filter(Boolean)
         .join(" and ");
-      const detail = input.detail ?? `No working ${missing || "camera or microphone"}`;
+      const detail =
+        input.detail ?? `No working ${missing || "camera or microphone"}`;
 
       await db
         .update(schema.interviewsAi)
         .set({
           proctorEvents: [
             ...(row.proctorEvents ?? []),
-            { at: Date.now(), kind: "device_check_failed", detail, flags: ["device_check_failed"] },
+            {
+              at: Date.now(),
+              kind: "device_check_failed",
+              detail,
+              flags: ["device_check_failed"],
+            },
           ].slice(-200),
         })
         .where(eq(schema.interviewsAi.id, row.id));
 
       const [candidate] = await db
-        .select({ firstName: schema.candidates.firstName, lastName: schema.candidates.lastName })
+        .select({
+          firstName: schema.candidates.firstName,
+          lastName: schema.candidates.lastName,
+        })
         .from(schema.candidates)
         .where(eq(schema.candidates.id, row.candidateId))
         .limit(1);
@@ -743,26 +965,38 @@ export const aiInterviews = {
           )[0]
         : undefined;
 
-      const agencyId = row?.agencyId ?? (await db.select().from(schema.agencies).limit(1))[0]?.id;
+      const agencyId =
+        row?.agencyId ??
+        (await db.select().from(schema.agencies).limit(1))[0]?.id;
       if (!agencyId) return { ok: false };
 
       const candidate = row
         ? (
             await db
-              .select({ firstName: schema.candidates.firstName, lastName: schema.candidates.lastName })
+              .select({
+                firstName: schema.candidates.firstName,
+                lastName: schema.candidates.lastName,
+              })
               .from(schema.candidates)
               .where(eq(schema.candidates.id, row.candidateId))
               .limit(1)
           )[0]
         : undefined;
-      const who = candidate ? `${candidate.firstName} ${candidate.lastName ?? ""}`.trim() : "A candidate";
+      const who = candidate
+        ? `${candidate.firstName} ${candidate.lastName ?? ""}`.trim()
+        : "A candidate";
 
       /* Addressed to every super admin so it lands in an owner's inbox rather
          than the general agency feed. */
       const admins = await db
         .select({ id: schema.user.id })
         .from(schema.user)
-        .where(and(eq(schema.user.agencyId, agencyId), eq(schema.user.role, "super_admin")))
+        .where(
+          and(
+            eq(schema.user.agencyId, agencyId),
+            eq(schema.user.role, "super_admin"),
+          ),
+        )
         .limit(20);
 
       const title = `Voice agent failure — ${input.scope}`;
@@ -797,45 +1031,62 @@ export const aiInterviews = {
     }),
 
   /** Public: mark the session live. */
-  start: base.input(z.object({ token: z.string() })).handler(async ({ input }) => {
-    const [existing] = await db
-      .select({ id: schema.interviewsAi.id, conductedAt: schema.interviewsAi.conductedAt })
-      .from(schema.interviewsAi)
-      .where(eq(schema.interviewsAi.token, input.token))
-      .limit(1);
-    if (!existing) throw new ORPCError("NOT_FOUND");
-    const now = new Date();
-    await db
-      .update(schema.interviewsAi)
-      .set({
-        status: "in_progress",
-        /* A resumed sitting keeps its original start time, so the clock the
+  start: base
+    .input(z.object({ token: z.string() }))
+    .handler(async ({ input }) => {
+      const [existing] = await db
+        .select({
+          id: schema.interviewsAi.id,
+          conductedAt: schema.interviewsAi.conductedAt,
+        })
+        .from(schema.interviewsAi)
+        .where(eq(schema.interviewsAi.token, input.token))
+        .limit(1);
+      if (!existing) throw new ORPCError("NOT_FOUND");
+      const now = new Date();
+      await db
+        .update(schema.interviewsAi)
+        .set({
+          status: "in_progress",
+          /* A resumed sitting keeps its original start time, so the clock the
            candidate is measured against never restarts. */
-        conductedAt: existing.conductedAt ?? now,
-        lastSeenAt: now,
-      })
-      .where(eq(schema.interviewsAi.id, existing.id));
-    return { ok: true, startedAt: existing.conductedAt ?? now };
-  }),
+          conductedAt: existing.conductedAt ?? now,
+          lastSeenAt: now,
+        })
+        .where(eq(schema.interviewsAi.id, existing.id));
+      return { ok: true, startedAt: existing.conductedAt ?? now };
+    }),
 
   /** Public: append transcript turns as the conversation happens. */
   appendTranscript: base
     .input(
       z.object({
         token: z.string(),
-        turns: z.array(z.object({ role: z.enum(["ai", "candidate"]), text: z.string(), at: z.number() })),
+        turns: z.array(
+          z.object({
+            role: z.enum(["ai", "candidate"]),
+            text: z.string(),
+            at: z.number(),
+          }),
+        ),
       }),
     )
     .handler(async ({ input }) => {
       const [row] = await db
-        .select({ id: schema.interviewsAi.id, transcript: schema.interviewsAi.transcript })
+        .select({
+          id: schema.interviewsAi.id,
+          transcript: schema.interviewsAi.transcript,
+        })
         .from(schema.interviewsAi)
         .where(eq(schema.interviewsAi.token, input.token))
         .limit(1);
       if (!row) throw new ORPCError("NOT_FOUND");
       await db
         .update(schema.interviewsAi)
-        .set({ transcript: [...(row.transcript ?? []), ...input.turns], lastSeenAt: new Date() })
+        .set({
+          transcript: [...(row.transcript ?? []), ...input.turns],
+          lastSeenAt: new Date(),
+        })
         .where(eq(schema.interviewsAi.id, row.id));
       return { ok: true };
     }),
@@ -893,10 +1144,13 @@ export const aiInterviews = {
         .set({
           proctorEvents: events,
           lastSeenAt: new Date(),
-          focusLossCount: row.focusLossCount + (input.kind === "focus_lost" ? 1 : 0),
+          focusLossCount:
+            row.focusLossCount + (input.kind === "focus_lost" ? 1 : 0),
           awaySeconds: row.awaySeconds + Math.round(input.awaySeconds),
           fraudFlags: [...new Set([...(row.fraudFlags ?? []), ...input.flags])],
-          positiveSignals: [...new Set([...(row.positiveSignals ?? []), ...input.positives])],
+          positiveSignals: [
+            ...new Set([...(row.positiveSignals ?? []), ...input.positives]),
+          ],
         })
         .where(eq(schema.interviewsAi.id, row.id));
 
@@ -954,15 +1208,23 @@ export const aiInterviews = {
         focusLossCount: Math.max(row.focusLossCount, input.focusLossCount),
         awaySeconds: Math.max(row.awaySeconds, Math.round(input.awaySeconds)),
         timePenaltySeconds: Math.round(input.timePenaltySeconds),
-        fraudFlags: [...new Set([...(row.fraudFlags ?? []), ...input.fraudFlags])],
-        positiveSignals: [...new Set([...(row.positiveSignals ?? []), ...input.positiveSignals])],
+        fraudFlags: [
+          ...new Set([...(row.fraudFlags ?? []), ...input.fraudFlags]),
+        ],
+        positiveSignals: [
+          ...new Set([
+            ...(row.positiveSignals ?? []),
+            ...input.positiveSignals,
+          ]),
+        ],
         resumeCount: row.resumeCount,
       });
       /* Sustained eye contact is reported to the recruiter as a positive read on
          the candidate's confidence, separately from the grader's own score. */
-      const confidentPresence = [...(row.positiveSignals ?? []), ...input.positiveSignals].includes(
-        "strong_eye_contact",
-      );
+      const confidentPresence = [
+        ...(row.positiveSignals ?? []),
+        ...input.positiveSignals,
+      ].includes("strong_eye_contact");
 
       /* Grade against the recruiter's own question set, not a generic rubric. */
       const questionSet = row.questionSetId
@@ -988,8 +1250,11 @@ export const aiInterviews = {
         integrity,
       });
 
-      const flags = [...new Set([...(row.fraudFlags ?? []), ...input.fraudFlags])];
-      const suspicious = input.terminated && flags.some((f) => f !== "no_camera");
+      const flags = [
+        ...new Set([...(row.fraudFlags ?? []), ...input.fraudFlags]),
+      ];
+      const suspicious =
+        input.terminated && flags.some((f) => f !== "no_camera");
 
       await db
         .update(schema.interviewsAi)
@@ -1001,8 +1266,15 @@ export const aiInterviews = {
           focusLossCount: Math.max(row.focusLossCount, input.focusLossCount),
           awaySeconds: Math.max(row.awaySeconds, Math.round(input.awaySeconds)),
           timePenaltySeconds: Math.round(input.timePenaltySeconds),
-          fraudFlags: [...new Set([...(row.fraudFlags ?? []), ...input.fraudFlags])],
-          positiveSignals: [...new Set([...(row.positiveSignals ?? []), ...input.positiveSignals])],
+          fraudFlags: [
+            ...new Set([...(row.fraudFlags ?? []), ...input.fraudFlags]),
+          ],
+          positiveSignals: [
+            ...new Set([
+              ...(row.positiveSignals ?? []),
+              ...input.positiveSignals,
+            ]),
+          ],
           assessment: graded
             ? {
                 communication: graded.communication,
@@ -1017,12 +1289,18 @@ export const aiInterviews = {
             input.terminated
               ? `INTERVIEW TERMINATED: ${input.terminationReason ?? "ended early by the interview system"}.`
               : null,
-            graded?.summary ?? skipped ?? "Interview completed but could not be graded.",
-            graded ? `CONFIDENCE IN THIS ASSESSMENT: ${graded.reliability}` : null,
-            graded?.redFlags?.length ? `RED FLAGS: ${graded.redFlags.join("; ")}` : null,
+            graded?.summary ??
+              skipped ??
+              "Interview completed but could not be graded.",
+            graded
+              ? `CONFIDENCE IN THIS ASSESSMENT: ${graded.reliability}`
+              : null,
+            graded?.redFlags?.length
+              ? `RED FLAGS: ${graded.redFlags.join("; ")}`
+              : null,
             confidentPresence && !input.terminated
-                ? "VERY CONFIDENT CANDIDATE: held direct eye contact with the camera throughout the interview."
-                : null,
+              ? "VERY CONFIDENT CANDIDATE: held direct eye contact with the camera throughout the interview."
+              : null,
             `INTEGRITY: ${integrity}`,
           ]
             .filter(Boolean)
@@ -1076,7 +1354,9 @@ export const aiInterviews = {
         row.candidateId,
         "ai_interview",
         input.terminated ? "AI interview terminated" : "AI interview completed",
-        input.terminated ? (input.terminationReason ?? "Ended early").slice(0, 200) : graded?.summary?.slice(0, 200),
+        input.terminated
+          ? (input.terminationReason ?? "Ended early").slice(0, 200)
+          : graded?.summary?.slice(0, 200),
         "AI Interviewer",
       );
       await notify(
@@ -1085,27 +1365,44 @@ export const aiInterviews = {
         input.terminated
           ? `${candidate?.firstName ?? "A candidate"}'s interview was cut short — ${input.terminationReason ?? "flagged for review"}. Reschedule it if appropriate.`
           : `${candidate?.firstName ?? "A candidate"} finished the AI interview — report ready.${
-              confidentPresence ? " Very confident candidate: held direct eye contact throughout." : ""
+              confidentPresence
+                ? " Very confident candidate: held direct eye contact throughout."
+                : ""
             }`,
         input.terminated ? "warning" : "info",
         `/ai-interviews`,
       );
 
-      return { ok: true, graded: Boolean(graded), terminated: input.terminated };
+      return {
+        ok: true,
+        graded: Boolean(graded),
+        terminated: input.terminated,
+      };
     }),
 
-  /** Recruiter can regrade after editing/importing a transcript. */
-  regrade: authed.input(z.object({ id: z.string() })).handler(async ({ input, context }) => {
-    const [row] = await db
-      .select({ token: schema.interviewsAi.token })
-      .from(schema.interviewsAi)
-      .where(
-        and(eq(schema.interviewsAi.id, input.id), eq(schema.interviewsAi.agencyId, context.agencyId)),
-      )
-      .limit(1);
-    if (!row) throw new ORPCError("NOT_FOUND");
-    return { token: row.token };
-  }),
+  /**
+   * Re-run the assessment from the stored transcript. Used when grading was
+   * skipped or failed at the end of the interview, and after a recruiter edits
+   * or imports a transcript — so a report is never permanently empty.
+   */
+  regrade: authed
+    .input(z.object({ id: z.string() }))
+    .handler(async ({ input, context }) => {
+      const [row] = await db
+        .select()
+        .from(schema.interviewsAi)
+        .where(
+          and(
+            eq(schema.interviewsAi.id, input.id),
+            eq(schema.interviewsAi.agencyId, context.agencyId),
+          ),
+        )
+        .limit(1);
+      if (!row) throw new ORPCError("NOT_FOUND");
+
+      const result = await regradeStored(row);
+      return { ok: result.graded !== null, reason: result.skipped ?? null };
+    }),
 
   /**
    * Completed AI interview results, ready to surface on a candidate card: an
@@ -1119,7 +1416,8 @@ export const aiInterviews = {
         eq(schema.interviewsAi.agencyId, context.agencyId),
         eq(schema.interviewsAi.status, "completed"),
       ];
-      if (input?.candidateId) where.push(eq(schema.interviewsAi.candidateId, input.candidateId));
+      if (input?.candidateId)
+        where.push(eq(schema.interviewsAi.candidateId, input.candidateId));
 
       const rows = await db
         .select({
@@ -1145,8 +1443,14 @@ export const aiInterviews = {
           jobTitle: schema.jobDescriptions.title,
         })
         .from(schema.interviewsAi)
-        .innerJoin(schema.candidates, eq(schema.candidates.id, schema.interviewsAi.candidateId))
-        .leftJoin(schema.jobDescriptions, eq(schema.jobDescriptions.id, schema.interviewsAi.jdId))
+        .innerJoin(
+          schema.candidates,
+          eq(schema.candidates.id, schema.interviewsAi.candidateId),
+        )
+        .leftJoin(
+          schema.jobDescriptions,
+          eq(schema.jobDescriptions.id, schema.interviewsAi.jdId),
+        )
         .where(and(...where))
         .orderBy(desc(schema.interviewsAi.conductedAt))
         .limit(200);
@@ -1164,7 +1468,9 @@ export const aiInterviews = {
             ]
           : [];
         const score = values.length
-          ? Math.round((values.reduce((x, y) => x + y, 0) / values.length) * 100) / 10
+          ? Math.round(
+              (values.reduce((x, y) => x + y, 0) / values.length) * 100,
+            ) / 10
           : null;
         return {
           ...r,

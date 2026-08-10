@@ -176,3 +176,22 @@ Verified: typecheck, check-conventions, build pass; interview page loads on the 
 - Rejoin skips the greeting and audio check.
 - Verified: typecheck 3/3, conventions clean, build 2/2, interview room loads in
   Playwright with zero console/page errors.
+
+## Round: always-graded results + results-card polish
+
+- `interview-grade.ts`: replaced the hard 60-word cutoff with a 10-word floor plus a
+  "thin transcript" mode. Anything above the floor now gets the full report — scores,
+  dimensions, coverage, tech focus — with reliability forced to `low` and the summary
+  opening with "Only N words of candidate speech were captured…". Below 10 words there is
+  genuinely nothing to read, so it still reports honestly instead of inventing numbers.
+- `aiInterviews.regrade` actually regrades now. It previously just returned the token, so
+  the "Re-grade transcript" button in the full report did nothing. New module helper
+  `regradeStored()` re-runs grading from the stored transcript and rewrites only the
+  report columns (status, duration, recordings, proctoring counters untouched).
+- Backfilled the two ungraded interviews via `POST /api/rpc/aiInterviews/regrade`
+  (`aii_2i4unboy380jw8tz` → 28.3, `aii_c184qz7w11xat5ys`). Verified through
+  `aiInterviews/results`.
+- Results card badge now shows conducted date **and** time (`8/10/2026 · 06:44 AM`).
+- The date filter moved out of each tab panel and onto the tab line, right-aligned, for
+  all three tabs (Queued / Interview date / Conducted).
+- typecheck, konsistent, build all pass; Playwright on the Results tab: zero console errors.
