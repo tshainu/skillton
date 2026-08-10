@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ClipboardPaste, ListChecks, Pencil, Plus, Trash2, WandSparkles } from "lucide-react";
+import { parseQuestionBlock } from "@/lib/question-parser";
 import { Card, SectionTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +46,38 @@ export function QuestionSetsSettings({ canEdit }: { canEdit: boolean }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<Draft>(EMPTY);
   const [error, setError] = useState<string | null>(null);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState("");
+
+  /** Live read of the pasted block so the count updates as the recruiter types. */
+  const parsed = useMemo(() => parseQuestionBlock(pasteText), [pasteText]);
+  const parsedFollowUps = parsed.reduce((total, entry) => total + entry.followUps.length, 0);
+
+  function openPasteSheet() {
+    setPasteText("");
+    setPasteOpen(true);
+  }
+
+  /** Drops the parsed block into the draft, either replacing or appending. */
+  function applyPaste(mode: "replace" | "append") {
+    if (!parsed.length) return;
+    const incoming = parsed.map((entry) => ({
+      question: entry.question,
+      followUps: entry.followUps.join(" | "),
+    }));
+    const kept = draft.questions.filter((q) => q.question.trim());
+    setDraft({ ...draft, questions: mode === "replace" ? incoming : [...kept, ...incoming] });
+    setPasteOpen(false);
+    setPasteText("");
+    setError(null);
+    toast({
+      tone: "success",
+      title: `${incoming.length} question${incoming.length === 1 ? "" : "s"} imported`,
+      description: parsedFollowUps
+        ? `${parsedFollowUps} follow-up${parsedFollowUps === 1 ? "" : "s"} detected. Review before saving.`
+        : "No follow-ups detected — add them if you need probing questions.",
+    });
+  }
 
   function edit(setId: string) {
     const set = data?.sets.find((s) => s.id === setId);
@@ -59,6 +92,8 @@ export function QuestionSetsSettings({ canEdit }: { canEdit: boolean }) {
         : [{ question: "", followUps: "" }],
     });
     setError(null);
+    setPasteOpen(false);
+    setPasteText("");
     setOpen(true);
   }
 
@@ -113,6 +148,8 @@ export function QuestionSetsSettings({ canEdit }: { canEdit: boolean }) {
               onClick={() => {
                 setDraft(EMPTY);
                 setError(null);
+                setPasteOpen(false);
+                setPasteText("");
                 setOpen(true);
               }}
             >
@@ -202,7 +239,10 @@ export function QuestionSetsSettings({ canEdit }: { canEdit: boolean }) {
 
       <Modal
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={() => {
+          /* Keeps the draft alive while the paste sheet is on top. */
+          if (!pasteOpen) setOpen(false);
+        }}
         width="max-w-2xl"
         title={draft.id ? "Edit question set" : "New question set"}
         description="Separate multiple follow-ups with a pipe (|). The agent uses a follow-up only when an answer is vague."
@@ -256,6 +296,18 @@ export function QuestionSetsSettings({ canEdit }: { canEdit: boolean }) {
           </Field>
 
           <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-border px-3.5 py-2.5">
+              <div className="min-w-0">
+                <p className="text-[12.5px] font-semibold">Have the questions written down already?</p>
+                <p className="text-[11.5px] text-muted-foreground">
+                  Paste the whole list at once — questions and their follow-ups are picked up automatically.
+                </p>
+              </div>
+              <Button variant="outline" size="sm" onClick={openPasteSheet}>
+                <ClipboardPaste className="size-3.5" /> Paste a list
+              </Button>
+            </div>
+
             {draft.questions.map((q, index) => (
               <Card key={index} className="space-y-2.5 p-3.5">
                 <div className="flex items-center justify-between">
@@ -307,6 +359,75 @@ export function QuestionSetsSettings({ canEdit }: { canEdit: boolean }) {
           </div>
         </div>
       </Modal>
+
+      <Modal
+        open={pasteOpen}
+        onClose={() => setPasteOpen(false)}
+        width="max-w-2xl"
+        title="Paste questions"
+        description="Drop a plain-text list below. Numbered lines become questions; indented, bulleted or pipe-separated lines under them become follow-ups."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setPasteOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="outline" onClick={() => applyPaste("append")} disabled={!parsed.length}>
+              Add to existing
+            </Button>
+            <Button onClick={() => applyPaste("replace")} disabled={!parsed.length}>
+              <WandSparkles className="size-3.5" /> Replace all
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Textarea
+            autoFocus
+            value={pasteText}
+            onChange={(e) => setPasteText(e.target.value)}
+            spellCheck={false}
+            className="min-h-[280px] font-mono text-[12.5px] leading-relaxed"
+            placeholder={PASTE_PLACEHOLDER}
+          />
+
+          {pasteText.trim().length > 0 && (
+            <Card className="p-3.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Detected {parsed.length} question{parsed.length === 1 ? "" : "s"} ·{" "}
+                {parsedFollowUps} follow-up{parsedFollowUps === 1 ? "" : "s"}
+              </p>
+              {parsed.length === 0 ? (
+                <p className="mt-2 text-[12.5px] text-muted-foreground">
+                  Nothing recognised yet. Put each question on its own line.
+                </p>
+              ) : (
+                <ol className="mt-2.5 max-h-[220px] space-y-1.5 overflow-y-auto">
+                  {parsed.map((entry, i) => (
+                    <li key={i} className="text-[12.5px] leading-relaxed">
+                      <span className="num mr-2 text-muted-foreground">{i + 1}.</span>
+                      {entry.question}
+                      {entry.followUps.length > 0 && (
+                        <span className="mt-0.5 block pl-6 text-[11.5px] text-muted-foreground">
+                          Follow-ups: {entry.followUps.join(" · ")}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </Card>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }
+
+const PASTE_PLACEHOLDER = `1. Walk me through a system you owned end to end.
+   - What was the hardest trade-off you made?
+   - How did you measure that it worked?
+
+2. Tell me about a production incident you led.
+   Follow-ups: What was the root cause? ; What changed afterwards?
+
+Q3) Why are you leaving your current role? | What would keep you there?`;
