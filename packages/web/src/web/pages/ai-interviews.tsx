@@ -45,6 +45,7 @@ import { InviteSchedule, defaultSend, defaultSlot } from "../components/intervie
 import { ScorePill } from "../components/ui/score";
 import { Input } from "../components/ui/field";
 import { RecordingPlayer } from "../components/interviews/recording-player";
+import { DateRangeFilter, useDateRange } from "../components/ui/date-range-filter";
 
 type Tab = "queue" | "all" | "results";
 
@@ -58,6 +59,10 @@ export default function AiInterviewsPage() {
   const results = useAiInterviewResults();
 
   const [tab, setTab] = useState<Tab>("queue");
+  /* One date window per tab — each list has its own meaningful date column. */
+  const queueDates = useDateRange();
+  const resultDates = useDateRange();
+  const allDates = useDateRange();
   const [openId, setOpenId] = useState<string | null>(params.get("id"));
   const [link, setLink] = useState<string | null>(null);
   /* When that link stops working — the first thing a candidate asks. */
@@ -86,6 +91,20 @@ export default function AiInterviewsPage() {
   /* Recruiters print or paste reports into client documents, so every report has a
      plain tabular rendering next to the visual one. */
   const [reportView, setReportView] = useState<"report" | "table">("report");
+
+  /* Date-filtered views of each list. */
+  const queueRows = useMemo(
+    () => (queue.data ?? []).filter((row) => queueDates.inRange(row.updatedAt)),
+    [queue.data, queueDates],
+  );
+  const resultRows = useMemo(
+    () => (results.data ?? []).filter((row) => resultDates.inRange(row.conductedAt)),
+    [results.data, resultDates],
+  );
+  const allRows = useMemo(
+    () => (all.data ?? []).filter((row) => allDates.inRange(row.interview.conductedAt ?? row.interview.invitedAt)),
+    [all.data, allDates],
+  );
   const detail = useAiInterview(openId ?? "");
 
   /* Every invite/re-schedule starts from a fresh slot suggestion rather than
@@ -187,8 +206,16 @@ export default function AiInterviewsPage() {
 
       {tab === "queue" && (
         <div className="rise rise-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <DateRangeFilter range={queueDates.range} onChange={queueDates.setRange} label="Queued" />
+            {queueDates.active && (
+              <span className="num text-[11.5px] text-muted-foreground">
+                {queueRows.length} of {(queue.data ?? []).length}
+              </span>
+            )}
+          </div>
           {queue.isLoading && <LoadingBlock rows={3} />}
-          {!queue.isLoading && (queue.data ?? []).length === 0 && (
+          {!queue.isLoading && queueRows.length === 0 && (
             <EmptyState
               icon={Mic}
               title="Nobody waiting for an invite"
@@ -204,7 +231,7 @@ export default function AiInterviewsPage() {
             />
           )}
           <div className="grid gap-3 lg:grid-cols-2">
-            {(queue.data ?? []).map((c) => (
+            {queueRows.map((c) => (
               <Card key={c.id} hover className="flex flex-wrap items-center gap-3 p-4">
                 <div className="min-w-0 flex-1">
                   <Link to={`/candidates/${c.id}`}>
@@ -239,8 +266,16 @@ export default function AiInterviewsPage() {
 
       {tab === "results" && (
         <div className="rise rise-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <DateRangeFilter range={resultDates.range} onChange={resultDates.setRange} label="Conducted" />
+            {resultDates.active && (
+              <span className="num text-[11.5px] text-muted-foreground">
+                {resultRows.length} of {(results.data ?? []).length}
+              </span>
+            )}
+          </div>
           {results.isLoading && <LoadingBlock rows={4} />}
-          {!results.isLoading && (results.data ?? []).length === 0 && (
+          {!results.isLoading && resultRows.length === 0 && (
             <EmptyState
               icon={Sparkles}
               title="No completed interviews yet"
@@ -248,7 +283,7 @@ export default function AiInterviewsPage() {
             />
           )}
           <div className="space-y-3">
-            {(results.data ?? []).map((row) => {
+            {resultRows.map((row) => {
               const summary = row.aiSummary ?? "";
               const terminated = summary.startsWith("INTERVIEW TERMINATED");
               const flags = row.fraudFlags ?? [];
@@ -379,11 +414,19 @@ export default function AiInterviewsPage() {
 
       {tab === "all" && (
         <div className="rise rise-3 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <DateRangeFilter range={allDates.range} onChange={allDates.setRange} label="Interview date" />
+            {allDates.active && (
+              <span className="num text-[11.5px] text-muted-foreground">
+                {allRows.length} of {(all.data ?? []).length}
+              </span>
+            )}
+          </div>
           {all.isLoading && <LoadingBlock rows={4} />}
-          {!all.isLoading && (all.data ?? []).length === 0 && (
+          {!all.isLoading && allRows.length === 0 && (
             <EmptyState icon={Mic} title="No interviews yet" body="Invite a candidate from the queue." />
           )}
-          {(all.data ?? []).map((row) => (
+          {allRows.map((row) => (
             <Card key={row.interview.id} hover className="p-4">
               <div className="flex flex-wrap items-start gap-4">
                 <div className="min-w-0 flex-1">

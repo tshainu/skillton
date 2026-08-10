@@ -287,6 +287,10 @@ app.post("/api/ai-interview/session", async (c) => {
         maxMinutes: settings.aiInterviewMaxMinutes,
         silenceNudgeSeconds: settings.aiSilenceNudgeSeconds,
         questionCount: questionSet?.questions?.length ?? 0,
+        /* The room matches these against what the interviewer actually says, so
+           it can close the call itself the moment the set has been covered —
+           without depending on the model remembering to call `end_interview`. */
+        questions: (questionSet?.questions ?? []).map((q) => q.question),
         questionSetId: questionSet?.id ?? null,
         voice: REALTIME_VOICE,
         proctoringEnabled: settings.aiProctoringEnabled,

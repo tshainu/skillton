@@ -84,6 +84,9 @@ export const screening = {
           bucket: schema.candidates.bucket,
           bucketReason: schema.candidates.bucketReason,
           tags: schema.candidates.tags,
+          /* Date the candidate entered screening — what the list filters on. */
+          updatedAt: schema.candidates.updatedAt,
+          createdAt: schema.candidates.createdAt,
         },
         match: schema.cvJdMatches,
         jobTitle: schema.jobDescriptions.title,
@@ -124,7 +127,10 @@ export const screening = {
   }),
 
   history: authed
-    .input(z.object({ candidateId: z.string() }).optional())
+    /* `candidateId` must be optional inside the object too: the screening page
+       sends `{ candidateId: undefined }` for the full history, which a required
+       field rejected outright — the History tab was answering 400 every time. */
+    .input(z.object({ candidateId: z.string().optional() }).optional())
     .handler(({ input, context }) =>
       db
         .select()

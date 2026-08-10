@@ -67,6 +67,19 @@ const COMPLETION_GRACE_MS = 20_000;
  */
 const END_HOLD_MS = 5_000;
 /**
+ * Silence after the last question in the set has been asked and answered before
+ * the room closes the interview itself. The interviewer is supposed to call
+ * `end_interview`; when it forgets, the candidate must not be left holding an
+ * open call, so coverage of the set is tracked here and the closing is forced.
+ */
+const COVERAGE_SETTLE_MS = 7_000;
+/**
+ * Share of a question's significant words that must appear in what the
+ * interviewer said for that question to count as asked. Deliberately loose — the
+ * model rephrases, and a missed match only delays the automatic close.
+ */
+const COVERAGE_MATCH_RATIO = 0.6;
+/**
  * Consecutive proctoring frames showing direct eye contact before the sitting is
  * credited as a confident presence. One frame is a coincidence of timing.
  */
@@ -101,6 +114,41 @@ const DEVICE_SETUP_SECONDS = 60;
  */
 const VOICE_FAILURE_NOTICE =
   "We are currently experiencing an issue with the voice interviewer. Please contact Skillton Intelligence, or your recruitment contact, so they can arrange your interview. Nothing you have done has caused this.";
+
+/** Words too common to prove that a particular question was the one asked. */
+const COVERAGE_STOP_WORDS = new Set([
+  "about", "after", "also", "and", "any", "are", "been", "before", "but", "can", "could", "did", "does", "doing",
+  "done", "for", "from", "get", "give", "had", "has", "have", "how", "into", "its", "just", "like", "make", "many",
+  "may", "me", "more", "most", "much", "must", "not", "now", "one", "our", "out", "over", "own", "part", "put",
+  "said", "same", "say", "see", "should", "since", "some", "such", "take", "tell", "than", "that", "the", "their",
+  "them", "then", "there", "these", "they", "this", "those", "through", "time", "under", "use", "very", "want",
+  "was", "way", "were", "what", "when", "where", "which", "while", "who", "why", "will", "with", "would", "you",
+  "your", "yours",
+]);
+
+function coverageWords(text: string) {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((word) => word.length > 2 && !COVERAGE_STOP_WORDS.has(word)),
+  );
+}
+
+/**
+ * Whether `spoken` looks like the interviewer asking `question`. The model
+ * rephrases freely, so this compares significant words rather than strings — a
+ * missed match only means the room waits for the model's own close instead.
+ */
+function looksLikeQuestion(question: string, spoken: string) {
+  const wanted = coverageWords(question);
+  if (wanted.size === 0) return false;
+  const said = coverageWords(spoken);
+  let hits = 0;
+  for (const word of wanted) if (said.has(word)) hits += 1;
+  return hits / wanted.size >= COVERAGE_MATCH_RATIO;
+}
 
 export default function AiInterviewRoomPage() {
   const { token = "" } = useParams<{ token: string }>();
@@ -140,6 +188,7 @@ export default function AiInterviewRoomPage() {
     proctoringEnabled: true,
     awayPenaltyMultiplier: 2,
     questionCount: 0,
+    questions: [] as string[],
   });
   const [cameraReady, setCameraReady] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
@@ -189,6 +238,13 @@ export default function AiInterviewRoomPage() {
   const completionRejected = useRef<boolean>(false);
   /** Moment the closing words finished playing, which starts the 5-second hold. */
   const completionSpokenAt = useRef<number>(0);
+  /** The recruiter's question set, and which of its questions have been asked. */
+  const questionsRef = useRef<string[]>([]);
+  const askedRef = useRef<Set<number>>(new Set());
+  /** Moment the set became fully covered, so the close can be forced after it settles. */
+  const coveredAt = useRef<number>(0);
+  /** True once the room has told the interviewer to close on its own initiative. */
+  const forcedCloseSent = useRef<boolean>(false);
   /** Consecutive frames of direct eye contact, and the positives earned so far. */
   const eyeContactStreak = useRef<number>(0);
   const positivesRef = useRef<Set<string>>(new Set());
@@ -400,6 +456,37 @@ export default function AiInterviewRoomPage() {
         if (held || waited > COMPLETION_GRACE_MS + END_HOLD_MS) {
           void endRef.current({});
           return;
+        }
+        return;
+      }
+
+      /* Every question in the set has been asked and the room has gone quiet.
+         The interviewer should have closed the call itself; when it does not,
+         the room takes over — it asks for the closing words and then hangs up on
+         its own timer, so finishing the interview is never the candidate's job. */
+      if (
+        !wrapUpSent.current &&
+        coveredAt.current > 0 &&
+        !aiSpeaking.current &&
+        !userSpeaking.current &&
+        !pendingAi.current.trim() &&
+        Date.now() - coveredAt.current > COVERAGE_SETTLE_MS &&
+        Date.now() - (lastSpeechAt.current || coveredAt.current) > COVERAGE_SETTLE_MS
+      ) {
+        if (!forcedCloseSent.current) {
+          /* First pass: ask for a proper goodbye and let it play out. */
+          forcedCloseSent.current = true;
+          closingStartedAt.current = Date.now();
+          wrapUpSent.current = true;
+          channel.send(
+            JSON.stringify({
+              type: "response.create",
+              response: {
+                instructions:
+                  "Every question in your set has now been asked and answered. Close the interview now, in under 15 seconds: thank the candidate by name, tell them the recruitment team will review the interview and follow up with next steps shortly, and wish them well. Ask no further questions, start no new topic, and then call end_interview.",
+              },
+            }),
+          );
         }
         return;
       }
@@ -790,6 +877,22 @@ export default function AiInterviewRoomPage() {
     }
   }
 
+  /**
+   * Marks off any question from the set that this utterance just asked. Coverage
+   * is what lets the room end the interview on its own once the set is done,
+   * instead of leaving the candidate to hang up.
+   */
+  function noteCoverage(spoken: string) {
+    if (!spoken.trim() || questionsRef.current.length === 0) return;
+    questionsRef.current.forEach((question, index) => {
+      if (askedRef.current.has(index)) return;
+      if (looksLikeQuestion(question, spoken)) askedRef.current.add(index);
+    });
+    if (askedRef.current.size >= questionsRef.current.length && !coveredAt.current) {
+      coveredAt.current = Date.now();
+    }
+  }
+
   /** Connect to the OpenAI Realtime API over WebRTC using an ephemeral key. */
   async function connectVoice(rejoinTurns?: Turn[]): Promise<boolean> {
     const res = await fetch("/api/ai-interview/session", {
@@ -810,6 +913,7 @@ export default function AiInterviewRoomPage() {
       proctoringEnabled?: boolean;
       awayPenaltyMultiplier?: number;
       questionCount?: number;
+      questions?: string[];
     };
     const { clientSecret, model } = payload;
     setLimits({
@@ -819,7 +923,9 @@ export default function AiInterviewRoomPage() {
       proctoringEnabled: payload.proctoringEnabled ?? true,
       awayPenaltyMultiplier: payload.awayPenaltyMultiplier ?? 2,
       questionCount: payload.questionCount ?? 0,
+      questions: payload.questions ?? [],
     });
+    questionsRef.current = payload.questions ?? [];
 
     /* Camera + microphone were already proven to work by the pre-flight device
        gate, and that same stream is reused here — an interview never starts
@@ -922,6 +1028,7 @@ export default function AiInterviewRoomPage() {
             pendingAi.current = msg.transcript;
           }
           aiComplete.current = true;
+          noteCoverage(pendingAi.current);
         }
         if (msg.type === "conversation.item.input_audio_transcription.delta" && msg.delta) {
           pendingUser.current += msg.delta;
@@ -1103,6 +1210,10 @@ export default function AiInterviewRoomPage() {
       completionRequested.current = 0;
       completionRejected.current = false;
       completionSpokenAt.current = 0;
+      askedRef.current = new Set();
+      coveredAt.current = 0;
+      forcedCloseSent.current = false;
+      completionSpokenAt.current = 0;
       videoLostAt.current = 0;
       userSpeaking.current = false;
 
@@ -1157,6 +1268,10 @@ export default function AiInterviewRoomPage() {
       wrapUpSent.current = false;
       completionRequested.current = 0;
       completionRejected.current = false;
+      completionSpokenAt.current = 0;
+      askedRef.current = new Set();
+      coveredAt.current = 0;
+      forcedCloseSent.current = false;
       completionSpokenAt.current = 0;
       videoLostAt.current = 0;
       userSpeaking.current = false;
@@ -1342,6 +1457,9 @@ export default function AiInterviewRoomPage() {
               {terminationNotice
                 ? `${terminationNotice} Everything recorded so far has been sent to the recruitment team, who will decide whether to reschedule.`
                 : `Thank you, ${candidateName}. Your responses have been recorded and shared with the recruitment team — they will be in touch about the next step.`}
+            </p>
+            <p className="mt-3 text-[12.5px] text-muted-foreground">
+              Nothing else is needed from you — you can close this window.
             </p>
             {completedSummary && (
               <p className="mt-5 rounded-lg border border-border bg-white/[0.02] p-4 text-left text-[12.5px] leading-relaxed text-muted-foreground">

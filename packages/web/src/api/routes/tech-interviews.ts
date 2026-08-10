@@ -110,6 +110,8 @@ export const techInterviews = {
         experienceYears: schema.candidates.experienceYears,
         currentStatus: schema.candidates.currentStatus,
         technologies: schema.candidates.technologies,
+        /* Date the candidate landed in this queue — what the list filters on. */
+        updatedAt: schema.candidates.updatedAt,
       })
       .from(schema.candidates)
       .where(

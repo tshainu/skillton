@@ -8,6 +8,7 @@ import { Badge, StatusBadge } from "../components/ui/badge";
 import { Field, Input, Select, Textarea } from "../components/ui/field";
 import { EmptyState, ErrorNote, LoadingBlock, Spinner } from "../components/ui/feedback";
 import { Modal, Tabs } from "../components/ui/modal";
+import { DateRangeFilter, useDateRange } from "../components/ui/date-range-filter";
 import { FormSection, MoneyInput, RadioGroup, RatingSlider, YesNo } from "../components/ui/inputs";
 import { formatMoney, parseAmountInput } from "../lib/currency";
 import { ScorePill } from "../components/ui/score";
@@ -41,6 +42,9 @@ export default function ScreeningPage() {
   const isAdmin = me.data && "user" in me.data && ["super_admin", "agency_admin"].includes(me.data.user.role);
 
   const [tab, setTab] = useState<Tab>("queue");
+  /* Queue and history each get their own date window. */
+  const queueDates = useDateRange();
+  const historyDates = useDateRange();
   const [active, setActive] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -112,7 +116,13 @@ export default function ScreeningPage() {
     }
   }
 
-  const rows = queue.data ?? [];
+  const allRows = queue.data ?? [];
+  const rows = useMemo(() => allRows.filter((row) => queueDates.inRange(row.updatedAt)), [allRows, queueDates]);
+  const allHistory = history.data ?? [];
+  const historyRows = useMemo(
+    () => allHistory.filter((row) => historyDates.inRange(row.conductedAt)),
+    [allHistory, historyDates],
+  );
 
   return (
     <>
@@ -160,6 +170,14 @@ export default function ScreeningPage() {
 
       {tab === "queue" && (
         <div className="rise rise-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <DateRangeFilter range={queueDates.range} onChange={queueDates.setRange} label="In queue since" />
+            {queueDates.active && (
+              <span className="num text-[11.5px] text-muted-foreground">
+                {rows.length} of {allRows.length}
+              </span>
+            )}
+          </div>
           {queue.isLoading && <LoadingBlock rows={4} />}
           {!queue.isLoading && rows.length === 0 && (
             <EmptyState
@@ -289,11 +307,19 @@ export default function ScreeningPage() {
 
       {tab === "history" && (
         <div className="rise rise-3 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <DateRangeFilter range={historyDates.range} onChange={historyDates.setRange} label="Screened" />
+            {historyDates.active && (
+              <span className="num text-[11.5px] text-muted-foreground">
+                {historyRows.length} of {allHistory.length}
+              </span>
+            )}
+          </div>
           {history.isLoading && <LoadingBlock rows={4} />}
-          {history.data?.length === 0 && (
+          {historyRows.length === 0 && !history.isLoading && (
             <EmptyState icon={ClipboardCheck} title="No screenings recorded yet" />
           )}
-          {(history.data ?? []).map((hr) => (
+          {historyRows.map((hr) => (
             <Card key={hr.id} className="p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <StatusBadge status={hr.result} />

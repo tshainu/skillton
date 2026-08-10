@@ -140,3 +140,22 @@ Verified: typecheck, check-conventions, build pass; interview page loads on the 
 5. Sustained eye contact → "very confident candidate" signal on the report.
 6. Flagged Candidates: show the AI interview score.
 7. Placed page + dashboard data: root cause = talent.setClientOutcome("placed") set candidates.currentStatus='hired' without ever inserting a placements row (5 hired, 1 placement). All other list/stat endpoints probed live and returning data.
+
+## Round: auto-end + date filters
+
+- **Interview ends itself.** The room now tracks which questions of the recruiter's
+  set have actually been asked (word-overlap match against the interviewer's own
+  transcript, `COVERAGE_MATCH_RATIO`). Once every question is covered and the line
+  has been quiet for `COVERAGE_SETTLE_MS` (7s), the room asks for the closing words
+  and then hangs up on its own timer — it no longer depends on the model calling
+  `end_interview`, and the candidate is never left to close the call. The session
+  endpoint now ships the question texts to the room for this.
+  The done screen says explicitly that nothing else is needed from the candidate.
+- **Date filters** on HR screening (queue + history), AI interview (queue + interviews
+  + results) and Technical (queue + completed): All time / Today / This week /
+  This month / Custom range, with an "x of y" count when a window is active.
+  Logic in `web/lib/date-range.ts`, control in `web/components/ui/date-range-filter.tsx`.
+  Queue endpoints now select `updatedAt` so the queues can be filtered by date.
+- **Fixed** `screening.history`: its input required `candidateId`, so the page's
+  `{ candidateId: undefined }` was rejected — the History tab had been answering
+  400 on every load.

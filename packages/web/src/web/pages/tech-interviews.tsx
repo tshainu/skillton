@@ -7,6 +7,7 @@ import { Button } from "../components/ui/button";
 import { Badge, StatusBadge } from "../components/ui/badge";
 import { Field, Input, Select, Textarea } from "../components/ui/field";
 import { EmptyState, ErrorNote, LoadingBlock, Spinner } from "../components/ui/feedback";
+import { DateRangeFilter, useDateRange } from "../components/ui/date-range-filter";
 import { Modal, Tabs } from "../components/ui/modal";
 import { Meter, ScorePill, ScoreRing } from "../components/ui/score";
 import {
@@ -34,6 +35,9 @@ export default function TechInterviewsPage() {
   const isAdmin = me.data && "user" in me.data && ["super_admin", "agency_admin"].includes(me.data.user.role);
 
   const [tab, setTab] = useState<Tab>("queue");
+  /* Queue and completed lists each filter on their own date, one control per tab. */
+  const queueDates = useDateRange();
+  const doneDates = useDateRange();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [templateId, setTemplateId] = useState("");
   const [scores, setScores] = useState<Record<string, Record<string, number>>>({});
@@ -103,8 +107,13 @@ export default function TechInterviewsPage() {
     }
   }
 
-  const rows = queue.data ?? [];
-  const done = list.data ?? [];
+  const allRows = queue.data ?? [];
+  const allDone = list.data ?? [];
+  const rows = useMemo(() => allRows.filter((row) => queueDates.inRange(row.updatedAt)), [allRows, queueDates]);
+  const done = useMemo(
+    () => allDone.filter((row) => doneDates.inRange(row.interview.conductedAt)),
+    [allDone, doneDates],
+  );
 
   return (
     <>
@@ -157,6 +166,14 @@ export default function TechInterviewsPage() {
 
       {tab === "queue" && (
         <div className="rise rise-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <DateRangeFilter range={queueDates.range} onChange={queueDates.setRange} label="Queued" />
+            {queueDates.active && (
+              <span className="num text-[11.5px] text-muted-foreground">
+                {rows.length} of {allRows.length}
+              </span>
+            )}
+          </div>
           {queue.isLoading && <LoadingBlock rows={3} />}
           {!queue.isLoading && rows.length === 0 && (
             <EmptyState
@@ -228,6 +245,14 @@ export default function TechInterviewsPage() {
 
       {tab === "completed" && (
         <div className="rise rise-3 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <DateRangeFilter range={doneDates.range} onChange={doneDates.setRange} label="Conducted" />
+            {doneDates.active && (
+              <span className="num text-[11.5px] text-muted-foreground">
+                {done.length} of {allDone.length}
+              </span>
+            )}
+          </div>
           {list.isLoading && <LoadingBlock rows={4} />}
           {done.length === 0 && <EmptyState icon={Bot} title="No technical interviews recorded yet" />}
           {done.map((row) => (
