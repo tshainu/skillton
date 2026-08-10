@@ -13,7 +13,7 @@ import {
   timeline,
 } from "../middleware/auth";
 import { summariseProctoring } from "../lib/proctor";
-import { gradeInterview } from "../lib/interview-grade";
+import { gradeInterview, toStoredAssessment } from "../lib/interview-grade";
 import {
   interviewInviteEmail,
   sendEmail,
@@ -123,16 +123,7 @@ async function regradeStored(row: typeof schema.interviewsAi.$inferSelect) {
   await db
     .update(schema.interviewsAi)
     .set({
-      assessment: graded
-        ? {
-            communication: graded.communication,
-            confidence: graded.confidence,
-            knowledge: graded.knowledge,
-            professionalism: graded.professionalism,
-            criticalThinking: graded.criticalThinking,
-            responseConsistency: graded.responseConsistency,
-          }
-        : null,
+      assessment: graded ? toStoredAssessment(graded) : null,
       aiSummary: [
         row.status === "terminated"
           ? "INTERVIEW TERMINATED: ended early by the interview system."
@@ -1275,16 +1266,7 @@ export const aiInterviews = {
               ...input.positiveSignals,
             ]),
           ],
-          assessment: graded
-            ? {
-                communication: graded.communication,
-                confidence: graded.confidence,
-                knowledge: graded.knowledge,
-                professionalism: graded.professionalism,
-                criticalThinking: graded.criticalThinking,
-                responseConsistency: graded.responseConsistency,
-              }
-            : null,
+          assessment: graded ? toStoredAssessment(graded) : null,
           aiSummary: [
             input.terminated
               ? `INTERVIEW TERMINATED: ${input.terminationReason ?? "ended early by the interview system"}.`

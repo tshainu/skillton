@@ -577,6 +577,9 @@ export default function AiInterviewRoomPage() {
       /* Pacing checkpoints. The model has no clock of its own, so without this it
          happily spends twelve minutes on question one and then rushes the rest.
          At 50% and 80% of the window it is told what is left and told to budget. */
+      /* Nothing the room says may land on top of the candidate. If they are
+         mid-answer the mark is left unspent and retried on the next tick. */
+      if (userSpeaking.current || aiSpeaking.current || pendingAi.current.trim()) return;
       for (const mark of [0.5, 0.8]) {
         if (pacingSent.current.has(mark)) continue;
         if (runningMs < limits.maxMinutes * 60_000 * mark) continue;
@@ -601,7 +604,7 @@ export default function AiInterviewRoomPage() {
          never fire mid-thought. */
       const silentFor = Date.now() - (lastSpeechAt.current || startedAt.current);
       const nudgeAfter = Math.max(limits.silenceNudgeSeconds, 18) * 1000;
-      if (silentFor > nudgeAfter && nudgeCount.current < 12) {
+      if (!userSpeaking.current && silentFor > nudgeAfter && nudgeCount.current < 12) {
         nudgeCount.current++;
         lastSpeechAt.current = Date.now();
         /* Before the interview has begun the only thing outstanding is the audio
@@ -634,17 +637,30 @@ export default function AiInterviewRoomPage() {
       setWarning(message);
       if (warningTimer.current) window.clearTimeout(warningTimer.current);
       warningTimer.current = window.setTimeout(() => setWarning(null), 9000);
-      const channel = dc.current;
-      if (viaAi && channel?.readyState === "open") {
+      if (!viaAi) return;
+      /* The on-screen warning is instant, but the spoken one waits: cutting
+         across a candidate mid-answer is exactly the interruption we are
+         removing. Retried for up to 30s, then dropped — the banner already
+         carried the message. */
+      let attempts = 0;
+      const trySpeak = () => {
+        const channel = dc.current;
+        if (!channel || channel.readyState !== "open") return;
+        if (userSpeaking.current || aiSpeaking.current || pendingAi.current.trim()) {
+          if (attempts++ > 30) return;
+          window.setTimeout(trySpeak, 1000);
+          return;
+        }
         channel.send(
           JSON.stringify({
             type: "response.create",
             response: {
-              instructions: `Interrupt politely and tell the candidate, in your own words: "${message}" Keep it to one short sentence, then continue the interview.`,
+              instructions: `Tell the candidate, in your own words: "${message}" Keep it to one short sentence, then continue the interview from where you were. Do not re-ask the question.`,
             },
           }),
         );
-      }
+      };
+      trySpeak();
     },
     [],
   );

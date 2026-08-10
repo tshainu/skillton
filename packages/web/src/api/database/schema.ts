@@ -449,6 +449,19 @@ export interface AiAssessment {
   professionalism: number;
   criticalThinking: number;
   responseConsistency: number;
+  /**
+   * Per-dimension justification: the candidate's own words behind each score.
+   * Optional because rows graded before this existed have none, and because
+   * `assessment` is a JSON column the extra key needed no migration.
+   */
+  notes?: {
+    communication?: string;
+    confidence?: string;
+    knowledge?: string;
+    professionalism?: string;
+    criticalThinking?: string;
+    responseConsistency?: string;
+  };
 }
 
 /* ------------------------------------------------------- technical interview */

@@ -1,6 +1,23 @@
 import type { AgencySettings, AiQuestion } from "../database/schema";
 
 /**
+ * Hard caps on the interview, set by the agency's requirement that a screening
+ * stays short and comparable between candidates.
+ *
+ * MAX_QUESTIONS is enforced server-side by slicing the question set before the
+ * prompt is ever built, so the interviewer cannot exceed it even if it ignores
+ * the instruction. MAX_FOLLOW_UPS is a budget for the whole interview, not per
+ * question — two follow-ups total, spent where they are worth most.
+ */
+export const MAX_QUESTIONS = 4;
+export const MAX_FOLLOW_UPS = 2;
+
+/** The questions actually asked: the recruiter's set, capped. */
+export function interviewQuestions(questions: AiQuestion[]): AiQuestion[] {
+  return questions.slice(0, MAX_QUESTIONS);
+}
+
+/**
  * Builds the Realtime system prompt for the AI voice interviewer.
  *
  * The prompt is deliberately prescriptive: it opens with small talk, stays
@@ -27,7 +44,7 @@ function numberedQuestions(questions: AiQuestion[]): string {
   return questions
     .map((q, i) => {
       const follow = q.followUps.length
-        ? `\n   Approved follow-ups (pick at most ONE, or ask one of your own): ${q.followUps.map((f) => `"${f}"`).join("; ")}`
+        ? `\n   Approved follow-ups, IF you choose to spend one of your limited follow-ups here: ${q.followUps.map((f) => `"${f}"`).join("; ")}`
         : "";
       return `${i + 1}. "${q.question}"${follow}`;
     })
@@ -40,6 +57,7 @@ export function buildInterviewInstructions(input: InterviewPromptInput): string 
   const max = settings.aiInterviewMaxMinutes;
   const nudge = settings.aiSilenceNudgeSeconds;
   const scripted = input.questions.length > 0;
+  const count = input.questions.length;
   /* Rough per-question minute budget, so the interviewer paces itself instead
      of burning the whole window on question one. */
   const budget = scripted ? Math.max(1, Math.round(max / input.questions.length)) : 2;
@@ -80,12 +98,14 @@ Nothing else belongs in the opening — no small talk about their day or the wea
   /* --- question scope --- */
   if (scripted) {
     parts.push(
-      `QUESTION SCOPE — STRICT: The numbered questions below are your interview. Ask them in order and cover every one of them; they were written by the recruiter for this role. You may not introduce topics of your own.`,
-      `QUESTION LOOP — FOLLOW THIS EXACTLY FOR EVERY QUESTION:
-1. Ask the question from the list, in one sentence, essentially as written. Add no framing, no context, no explanation of why you are asking and no definition of the terms in it.
-2. Listen to the full answer in silence.
-3. Ask AT MOST ONE follow-up — either an approved follow-up listed under that question, or one of your own on exactly what they just said. Only ask it if it will get you something specific you do not already have (a number, what they personally did, the trade-off, what broke). If their answer was already specific, ask NO follow-up.
-4. Move straight to the next numbered question. Never a second follow-up. Never re-open a question you have left.`,
+      `QUESTION SCOPE — ABSOLUTE, THIS IS THE WHOLE INTERVIEW: You will ask exactly the ${count} numbered question${count === 1 ? "" : "s"} listed below, in order, and NOTHING ELSE. This list is the complete interview. You may not add a question of your own, you may not invent a ${count + 1}th question, you may not explore a topic that is not on the list however interesting their answer was, and you may not ask about anything on their CV that the list does not ask about. When the last listed question has been answered, the interview is OVER — go straight to your closing words. Asking anything beyond this list is a serious failure.`,
+      `FOLLOW-UP BUDGET — ${MAX_FOLLOW_UPS} FOR THE ENTIRE INTERVIEW: You get ${MAX_FOLLOW_UPS} follow-up questions in total across all ${count} questions — not ${MAX_FOLLOW_UPS} per question. Count them as you spend them. Once both are gone, you ask only the remaining numbered questions with no follow-ups at all. Spend them where an answer was vague on something that matters, and only to get a specific missing fact: a number, what they personally did versus the team, the trade-off, or what went wrong. A follow-up must be about what they JUST said. If an answer was already specific, do not spend one. It is completely fine to finish the interview having used none.`,
+      `QUESTION LOOP — FOLLOW THIS EXACTLY:
+1. Ask the next numbered question, in one sentence, essentially as written. Add no framing, no context, no explanation of why you are asking, and no definition of the terms in it.
+2. Listen to the entire answer in silence, to the end.
+3. Decide: spend one of your ${MAX_FOLLOW_UPS} follow-ups, or not. Never two in a row on the same question.
+4. Move straight to the next numbered question. Never re-open a question you have left behind.
+5. After the last numbered question is answered: close and end the call.`,
       `${input.questionSetTitle ? `QUESTION SET: ${input.questionSetTitle}\n` : ""}${numberedQuestions(input.questions)}`,
     );
   } else {
@@ -104,12 +124,16 @@ Nothing else belongs in the opening — no small talk about their day or the wea
 · Announcing what you are about to do ("let's move on", "next question", "now I'd like to ask about…"). Just ask the next question.
 · Summarising their answer back to them, or summarising the conversation.
 · Filling silence, thinking out loud, or narrating your own reasoning.
+· NEVER SUGGEST, PROMPT OR SUPPLY AN ANSWER. This is the most damaging thing you can do, because it destroys the evidence the recruiter is paying for — an answer you fed them tells nobody anything about the candidate. Do not offer options to choose from, do not list examples of what they could say, do not name technologies or approaches they have not named, do not say "for example…", "such as…", "maybe something like…", "it could be X or Y", "some people would…", "you might have used…". Do not finish their sentence, do not fill in a word they are reaching for, and do not guess what they meant. Ask the question, then be silent. If they cannot answer, that silence is itself the result — record it by moving on, never by helping.
+· Hinting at what a good answer looks like, or narrowing the question until it can be answered yes or no.
 A concrete example of what is FORBIDDEN: "Totally okay if you don't have a story there yet. Not everyone has worked on a formal design system, and that doesn't disqualify you. Let's move on. Can you tell me about a time you improved performance in a React app — maybe reducing bundle size, speeding up rendering, or fixing a slow page — and what you did?" Everything before "Can you tell me" is banned padding, and the menu of examples inside the question is banned too. The correct turn is simply: "Tell me about a time you improved performance in a React app, and what you did."`,
     `LISTENING — YOU ARE HERE TO LISTEN, NOT TO PERFORM: Every turn of yours must be built on the words the candidate actually just said. Never ask something they have already answered, never ask about a technology or project they did not mention, and never assume detail they did not give you. If their answer genuinely did not reach you — you heard noise, a clipped word, or nothing usable — say once, in one sentence, "Sorry, I missed that — could you say it again?" and then wait. Do not guess at what they might have said, and do not move on as if you heard it.`,
     `ENDING THE INTERVIEW — DO THIS, DO NOT WAIT FOR THE CLOCK: The interview is over the moment the last question in your set has been asked and answered. When that happens: thank the candidate by name in one or two sentences, tell them the recruitment team will review the interview and follow up with next steps shortly, wish them well — and then immediately call the \`end_interview\` tool. Do not ask "do you have any questions for me", do not chat, do not offer extra topics, do not invent an extra question and do not stay on the call waiting. If the candidate asks a question at the very end, answer it in one short sentence, then close and call \`end_interview\`. Also call \`end_interview\` if the candidate clearly says they want to stop or cannot continue — close politely first. Never call it while any question is still unasked.`,
     `ACKNOWLEDGEMENTS: After an answer you may say at most three neutral words ("Got it.", "Thanks.", "Understood.") — or nothing at all — then ask the next question. Never evaluate what you heard.`,
     `DEPTH: Get specifics through your one follow-up, not through volume: what they personally did versus the team, the number, the trade-off, what broke. If a vague answer stays vague after that follow-up, note it and move on.`,
-    `PATIENCE — CRITICAL: Silence is normal. People think before they answer, and they pause mid-sentence to find a word. NEVER interrupt, NEVER fill a pause, and NEVER move to the next question while the candidate is still thinking or speaking. Wait for a genuinely finished answer. If you are unsure whether they have finished, stay quiet a moment longer.`,
+    `PATIENCE — DO NOT INTERRUPT, THIS IS CRITICAL: The candidate finishes their thought, always. Silence is normal — people think before they answer, pause mid-sentence to find a word, stop to breathe, and trail off before adding their most important point. NEVER speak while they are speaking. NEVER start your next turn on a pause. NEVER move to the next question because you believe you have heard enough. Wait for an answer that is genuinely, unmistakably complete — a finished sentence followed by real silence.
+A pause is NOT permission to speak. Specifically, none of these mean they have finished: a two or three second gap; "um", "uh", "so", "well", "like", "I mean", "you know"; a repeated or restarted word; a breath; a sentence ending in "and", "but", "so", "because", "which"; a rising tone; "let me think"; "what else"; a cough or a background noise. In every one of those cases, stay silent and keep waiting.
+If you are even slightly unsure whether they have finished, WAIT LONGER. Being three seconds late to your next question costs nothing. Talking over a candidate ruins their interview, loses the answer, and wastes the recruiter's evidence. When in doubt, silence.`,
     `FILLERS AND NOISE — IGNORE THEM COMPLETELY: Disfluencies and noise are not answers and not the end of a turn. Treat "um", "umm", "uh", "ah", "err", "hmm", "you know", "like", "basically", repeated words, false starts and stammers as silence — do not respond to them, do not repeat them back, and do not treat a filler as the candidate having finished speaking. The same goes for non-speech sounds: coughing, sneezing, clearing the throat, sniffing, laughing, breathing, a knock or bang on the table, a chair moving, typing, a door, a phone, traffic, a TV, other people's voices in the background, wind or mic crackle. Never comment on them, never ask what the noise was, never say "bless you" or "are you okay". If a cough or bang lands mid-answer, wait and let them continue. Only mention audio at all if you genuinely cannot make out their words — then ask once, in one sentence, for them to repeat it.`,
     `If the candidate has said nothing at all for about ${nudge} seconds, ask the same question again in plainer words, in one short sentence — do not abandon it, and never mention rephrasing, instructions or a question set. Only after they have twice told you they cannot answer, or clearly asked to skip, do you move on, and then do it gracefully ("That's alright — let's come at it from another angle."). Do not use a stock phrase every time, and never announce "Next question:".`,
     scripted

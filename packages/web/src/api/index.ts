@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { createApp } from "./__core/app";
 import { buildCopilot } from "./agent/copilot";
 import { auth } from "./auth";
-import { buildInterviewInstructions } from "./lib/interview-prompt";
+import { buildInterviewInstructions, interviewQuestions } from "./lib/interview-prompt";
 import { resolveVoice } from "./lib/voices";
 import { resolveQuestionSet } from "./routes/question-sets";
 import { getSettings as getAgencySettings } from "./middleware/auth";
@@ -191,6 +191,11 @@ app.post("/api/ai-interview/session", async (c) => {
       .where(eq(schema.interviewsAi.id, interview.id));
   }
 
+  /* Hard cap enforced here, not by instruction: the model only ever sees the
+     questions it is allowed to ask, and the room's coverage auto-end counts the
+     same sliced list. */
+  const askQuestions = interviewQuestions(questionSet?.questions ?? []);
+
   const instructions = buildInterviewInstructions({
     candidateName: candidate ? `${candidate.firstName} ${candidate.lastName ?? ""}`.trim() : "the candidate",
     candidateHeadline: candidate?.headline ?? null,
@@ -198,7 +203,7 @@ app.post("/api/ai-interview/session", async (c) => {
     jobTitle: job?.title ?? null,
     jobLocation: job?.location ?? null,
     jobSkills: job?.skillsRequired ?? job?.parsed?.skills ?? [],
-    questions: questionSet?.questions ?? [],
+    questions: askQuestions,
     questionSetTitle: questionSet?.jobTitle ?? null,
     settings,
   });
@@ -286,11 +291,11 @@ app.post("/api/ai-interview/session", async (c) => {
         minMinutes: settings.aiInterviewMinMinutes,
         maxMinutes: settings.aiInterviewMaxMinutes,
         silenceNudgeSeconds: settings.aiSilenceNudgeSeconds,
-        questionCount: questionSet?.questions?.length ?? 0,
+        questionCount: askQuestions.length,
         /* The room matches these against what the interviewer actually says, so
            it can close the call itself the moment the set has been covered —
            without depending on the model remembering to call `end_interview`. */
-        questions: (questionSet?.questions ?? []).map((q) => q.question),
+        questions: askQuestions.map((q) => q.question),
         questionSetId: questionSet?.id ?? null,
         voice: REALTIME_VOICE,
         proctoringEnabled: settings.aiProctoringEnabled,

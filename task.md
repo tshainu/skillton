@@ -236,3 +236,11 @@ Live at **https://skillton.69-169-97-195.sslip.io** with a real trusted cert.
   - `parseCv` 3.4s and `parseJd` 2.6s, both clean structured output.
 - Deployed; live smoke-tested over HTTPS.
 - Stale `luna` mentions left in `plan-v2.md` on purpose — historical record.
+
+## Round: flat scores, interview caps, no interruptions
+- Grading: per-dimension orthogonal definitions + ANTI-HALO rule, each dimension now returns `{score, evidence}`; code-level spread check (`MIN_DIMENSION_SPREAD = 2`) forces one re-score when the model flattens. Stored via `toStoredAssessment()` (scores + `notes`).
+- New `assessment-bars.tsx` (`assessmentRows`, `AssessmentBars`, band colours). All 4 render sites in `ai-interviews.tsx` (result card, report bars, radar, printable table) go through it — `notes` can never render as a 7th dimension.
+- Caps enforced server-side: `interviewQuestions()` slices the set to `MAX_QUESTIONS = 4` in `api/index.ts` before prompt build; the same sliced list feeds `questions`/`questionCount` so coverage auto-end matches. `MAX_FOLLOW_UPS = 2` is a whole-interview budget in the prompt.
+- Prompt: QUESTION SCOPE absolute, FOLLOW-UP BUDGET, "NEVER SUGGEST/PROMPT/SUPPLY AN ANSWER", "DO NOT INTERRUPT" with non-terminal pause signals.
+- Room: pacing marks, silence nudge and proctoring `warn()` no longer fire while the candidate is speaking (`warn` retries up to 30s, then relies on the banner).
+- Verified: typecheck / conventions / build pass; regrade of aii_2i4unboy380jw8tz went 3-flat -> 4/3/2/6/2/2 with evidence per dimension; Playwright Results tab + full report modal, zero console errors.

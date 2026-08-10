@@ -55,6 +55,7 @@ import {
 import { ScorePill } from "../components/ui/score";
 import { Input } from "../components/ui/field";
 import { RecordingPlayer } from "../components/interviews/recording-player";
+import { AssessmentBars, assessmentRows } from "../components/interviews/assessment-bars";
 import {
   DateRangeFilter,
   useDateRange,
@@ -462,25 +463,7 @@ export default function AiInterviewsPage() {
                           "No summary was produced for this interview."}
                       </p>
 
-                      {row.assessment && (
-                        <div className="grid gap-x-5 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3">
-                          {Object.entries(row.assessment).map(
-                            ([key, value]) => (
-                              <div key={key}>
-                                <div className="mb-0.5 flex items-baseline justify-between gap-2">
-                                  <span className="text-[11px] capitalize text-muted-foreground">
-                                    {key.replace(/([A-Z])/g, " $1")}
-                                  </span>
-                                  <span className="num text-[10.5px] text-muted-foreground">
-                                    {value}/10
-                                  </span>
-                                </div>
-                                <Meter value={value as number} max={10} />
-                              </div>
-                            ),
-                          )}
-                        </div>
-                      )}
+                      {row.assessment && <AssessmentBars assessment={row.assessment} />}
 
                       {(row.suggestedTechFocus ?? []).length > 0 && (
                         <div>
@@ -1021,13 +1004,9 @@ export default function AiInterviewsPage() {
                   <ResponsiveContainer width="100%" height="100%">
                     <RadarChart
                       outerRadius="72%"
-                      data={Object.entries(
-                        detail.data.interview.assessment,
-                      ).map(([key, value]) => ({
-                        dimension: key
-                          .replace(/([A-Z])/g, " $1")
-                          .replace(/^./, (m) => m.toUpperCase()),
-                        score: value,
+                      data={assessmentRows(detail.data.interview.assessment).map((d) => ({
+                        dimension: d.label,
+                        score: d.value,
                       }))}
                     >
                       <PolarGrid stroke="#242424" />
@@ -1053,23 +1032,11 @@ export default function AiInterviewsPage() {
                     </RadarChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="space-y-2.5">
-                  {Object.entries(detail.data.interview.assessment).map(
-                    ([key, value]) => (
-                      <div key={key}>
-                        <div className="mb-1 flex items-baseline justify-between gap-2">
-                          <span className="text-[12px] capitalize">
-                            {key.replace(/([A-Z])/g, " $1")}
-                          </span>
-                          <span className="num text-[11px] text-muted-foreground">
-                            {value}/10
-                          </span>
-                        </div>
-                        <Meter value={value} max={10} />
-                      </div>
-                    ),
-                  )}
-                </div>
+                <AssessmentBars
+                  assessment={detail.data.interview.assessment}
+                  showNotes
+                  className="self-center"
+                />
               </div>
             )}
 
@@ -1252,10 +1219,7 @@ function AiReportTable({ data }: { data: AiInterviewDetail }) {
         <TableBlock
           title="Assessment"
           headers={["Dimension", "Score / 10"]}
-          rows={Object.entries(iv.assessment).map(([k, v]) => [
-            k.replace(/([A-Z])/g, " $1").replace(/^./, (m) => m.toUpperCase()),
-            String(v),
-          ])}
+          rows={assessmentRows(iv.assessment).map((d) => [d.label, String(d.value)])}
         />
       )}
       {(iv.topicCoverage ?? []).length > 0 && (
