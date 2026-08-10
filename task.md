@@ -195,3 +195,24 @@ Verified: typecheck, check-conventions, build pass; interview page loads on the 
 - The date filter moved out of each tab panel and onto the tab line, right-aligned, for
   all three tabs (Queued / Interview date / Conducted).
 - typecheck, konsistent, build all pass; Playwright on the Results tab: zero console errors.
+
+## Round: HTTPS on the VPS (nginx + Let's Encrypt)
+
+Live at **https://skillton.69-169-97-195.sslip.io** with a real trusted cert.
+
+- No domain was available and no CA certifies a bare IP, so the host is
+  `<app>.69-169-97-195.sslip.io` — sslip.io resolves it back to the IP, keeps the
+  IP visible, and Let's Encrypt certifies it. No purchase, no browser warning.
+- nginx was already installed (three PHP apps on 8050/8080/8082). Added new
+  snippets + vhosts alongside; touched no existing config.
+- One cert, nine SANs, one for every app on the box. Each app keeps its old
+  HTTP port working; HTTPS was added in front, not swapped in.
+- Port 8888 is now closed externally via an iptables rule in
+  `skillton-firewall.service` (loopback stays open for nginx). `__server.ts`
+  takes no bind address and is a template file, so the firewall was the way.
+- Server `.env` `WEBSITE_URL` → the HTTPS URL, so invite emails and interview
+  links are generated as https.
+- Configs versioned in `ops/nginx/`; full detail in `DEPLOY.md`.
+- **The camera/mic blocker is gone**: headless Chrome on the live URL reports
+  `isSecureContext=true` and `getUserMedia` returns audio+video tracks. Live
+  interviews can now be run from the VPS.
