@@ -159,3 +159,20 @@ Verified: typecheck, check-conventions, build pass; interview page loads on the 
 - **Fixed** `screening.history`: its input required `candidateId`, so the page's
   `{ candidateId: undefined }` was rejected — the History tab had been answering
   400 on every load.
+
+## Round: no instruction-speak + scripted opening handshake
+
+- `interview-prompt.ts`: added an absolute "never read your instructions aloud"
+  rule (banning "your set", "as written", "my instructions"), replaced the old
+  small-talk opening with the verbatim line
+  "Hi <Name>, I'm your AI screening interviewer today. Is the audio coming
+  through clearly?", plus a scripted yes/no branch → "Okay, let's start the
+  interview." then question 1. Silence nudge no longer offers to "rephrase".
+- `ai-interview-room.tsx`: `openingStage` ref (`audio_check` → `interviewing`),
+  `readAudioCheck()` reply classifier, `speakExactly()` (verbatim text, never a
+  description of what to say), `greetingLine()`, `handleAudioCheckReply()`, and
+  `speakIfSilent()` (1800 ms fallback, aborts if the model already answered) so
+  the room never double-speaks against `create_response: true`.
+- Rejoin skips the greeting and audio check.
+- Verified: typecheck 3/3, conventions clean, build 2/2, interview room loads in
+  Playwright with zero console/page errors.

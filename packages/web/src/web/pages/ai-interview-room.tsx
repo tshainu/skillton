@@ -115,6 +115,33 @@ const DEVICE_SETUP_SECONDS = 60;
 const VOICE_FAILURE_NOTICE =
   "We are currently experiencing an issue with the voice interviewer. Please contact Skillton Intelligence, or your recruitment contact, so they can arrange your interview. Nothing you have done has caused this.";
 
+/**
+ * Reads the candidate's reply to "is the audio coming through clearly?".
+ * Deliberately conservative: anything that is not a clear no is treated as
+ * unclear rather than as a yes, because starting the interview on a broken line
+ * wastes the whole sitting.
+ */
+function readAudioCheck(reply: string): "yes" | "no" | "unclear" {
+  const text = reply.toLowerCase().replace(/[^a-z\s']/g, " ");
+  const has = (pattern: RegExp) => pattern.test(text);
+
+  if (
+    has(
+      /\b(no|nope|not really|can'?t hear|cannot hear|couldn'?t hear|breaking up|cutting out|muffled|robotic|distorted|too (?:quiet|low|soft|faint)|very (?:quiet|low|faint)|barely|hardly|say (?:that )?again|repeat that|pardon|sorry what|not clear|unclear|there'?s (?:an )?echo|echoing|static|crackl)/,
+    )
+  ) {
+    return "no";
+  }
+  if (
+    has(
+      /\b(yes|yeah|yep|yup|ya|sure|clear|clearly|perfect|perfectly|fine|good|great|okay|ok|all good|loud and clear|i can hear|hear you|audible|no problem|go ahead|ready)\b/,
+    )
+  ) {
+    return "yes";
+  }
+  return "unclear";
+}
+
 /** Words too common to prove that a particular question was the one asked. */
 const COVERAGE_STOP_WORDS = new Set([
   "about", "after", "also", "and", "any", "are", "been", "before", "but", "can", "could", "did", "does", "doing",
@@ -238,6 +265,15 @@ export default function AiInterviewRoomPage() {
   const completionRejected = useRef<boolean>(false);
   /** Moment the closing words finished playing, which starts the 5-second hold. */
   const completionSpokenAt = useRef<number>(0);
+  /**
+   * The scripted opening handshake: the room greets, confirms the candidate can
+   * actually hear, and only then lets the interview proper begin. Left to the
+   * model this turned into it asking the candidate what its own first question
+   * was, so the room drives each turn with the literal words to say.
+   */
+  const openingStage = useRef<"audio_check" | "interviewing">("audio_check");
+  /** Unclear replies to the audio check, so the room stops asking eventually. */
+  const audioCheckTries = useRef<number>(0);
   /** The recruiter's question set, and which of its questions have been asked. */
   const questionsRef = useRef<string[]>([]);
   const askedRef = useRef<Set<number>>(new Set());
@@ -568,14 +604,22 @@ export default function AiInterviewRoomPage() {
       if (silentFor > nudgeAfter && nudgeCount.current < 12) {
         nudgeCount.current++;
         lastSpeechAt.current = Date.now();
+        /* Before the interview has begun the only thing outstanding is the audio
+           check, so the nudge repeats that question verbatim. Offering to
+           "rephrase the question" here is nonsense — no question has been asked
+           yet — and it is where the candidate heard instruction-speak. */
+        if (openingStage.current === "audio_check") {
+          speakIfSilent("Sorry, I didn't catch that — can you hear me clearly?");
+          return;
+        }
         channel.send(
           JSON.stringify({
             type: "response.create",
             response: {
               instructions:
                 nudgeCount.current % 2 === 1
-                  ? "The candidate has been silent for a while. Gently check in once — offer to rephrase the question or give them more time. Do not move to a new question. Keep it under 8 seconds."
-                  : "The candidate still cannot answer this one. Acknowledge that warmly in your own words, then continue the interview from where it makes sense. Do not use a stock phrase and do not announce the question number.",
+                  ? "The candidate has been silent for a while. Check in once, in one short sentence, and offer to repeat the question you just asked or give them more time. Do not move to a new question, do not refer to your instructions or to a question set, and keep it under 8 seconds."
+                  : "The candidate still cannot answer this one. Acknowledge that warmly in your own words, then continue the interview from where it makes sense. Do not use a stock phrase, do not announce the question number, and never refer to your instructions or to a question set.",
             },
           }),
         );
@@ -878,6 +922,86 @@ export default function AiInterviewRoomPage() {
   }
 
   /**
+   * Makes the interviewer say a given line word for word. Used for the scripted
+   * opening: describing the line to the model made it read the description out
+   * loud instead of the line.
+   */
+  function speakExactly(line: string, andThen = "") {
+    const channel = dc.current;
+    if (!channel || channel.readyState !== "open") return;
+    channel.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          instructions:
+            `Speak the following, word for word, and add nothing to it: "${line}"` +
+            (andThen ? ` ${andThen}` : " Say nothing else in this turn.") +
+            " Never mention or refer to this direction.",
+        },
+      }),
+    );
+  }
+
+  /** The opening greeting, addressed to the candidate by name. */
+  function greetingLine() {
+    const person = interview.data?.candidate;
+    const name = person ? `${person.firstName} ${person.lastName ?? ""}`.trim() : "";
+    return `Hi${name ? ` ${name}` : ""}, I'm your AI screening interviewer today. Is the audio coming through clearly?`;
+  }
+
+  /**
+   * Handles the candidate's reply to the audio check: begin the interview, ask
+   * them to fix their sound, or check once more if the reply was unreadable.
+   *
+   * The model answers the candidate's turn by itself, and its own instructions
+   * now script both branches — so the room only speaks if that answer never
+   * comes. Sending unconditionally would make the interviewer say everything
+   * twice.
+   */
+  function handleAudioCheckReply(reply: string) {
+    const verdict = readAudioCheck(reply);
+
+    if (verdict === "no") {
+      audioCheckTries.current = 0;
+      speakIfSilent(
+        "Sorry about that — please check your volume or your headphones, and tell me when you can hear me clearly.",
+      );
+      return;
+    }
+
+    if (verdict === "unclear" && audioCheckTries.current < 1) {
+      audioCheckTries.current += 1;
+      speakIfSilent("Sorry, I didn't catch that — can you hear me clearly?");
+      return;
+    }
+
+    /* Confirmed (or unreadable twice, which is not worth a third round trip).
+       The first question is handed over verbatim so it cannot be paraphrased,
+       announced or described. */
+    openingStage.current = "interviewing";
+    const first = questionsRef.current[0];
+    speakIfSilent(
+      "Okay, let's start the interview.",
+      first
+        ? `Then, in the same turn and with no pause or extra words between them, ask this question word for word: "${first}"`
+        : "Then immediately ask your first interview question, and nothing else.",
+    );
+  }
+
+  /**
+   * Says a line only if the interviewer has not started speaking on its own
+   * within a beat — a fallback for a model that stays silent, never a second
+   * voice on top of one that answered properly.
+   */
+  function speakIfSilent(line: string, andThen = "") {
+    window.setTimeout(() => {
+      if (endingRef.current) return;
+      if (aiSpeaking.current || pendingAi.current.trim() || userSpeaking.current) return;
+      speakExactly(line, andThen);
+    }, 1800);
+  }
+
+  /**
    * Marks off any question from the set that this utterance just asked. Coverage
    * is what lets the room end the interview on its own once the set is done,
    * instead of leaving the candidate to hang up.
@@ -1037,6 +1161,9 @@ export default function AiInterviewRoomPage() {
           const text = (msg.transcript ?? pendingUser.current).trim();
           pendingUser.current = "";
           if (text) record("candidate", text);
+          /* Still on the opening handshake: this reply decides whether the
+             interview starts or the candidate is asked to fix their audio. */
+          if (text && openingStage.current === "audio_check") handleAudioCheckReply(text);
         }
       } catch {
         /* ignore non-JSON frames */
@@ -1048,6 +1175,9 @@ export default function AiInterviewRoomPage() {
          told to pick up rather than start again — otherwise a reload would mean
          answering question one twice. */
       if (rejoinTurns && rejoinTurns.length > 0) {
+        /* A rejoin resumes an interview that already started — no greeting and
+           no audio check, the candidate has already been through both. */
+        openingStage.current = "interviewing";
         const history = rejoinTurns
           .slice(-40)
           .map((turn) => `${turn.role === "ai" ? "You" : "Candidate"}: ${turn.text}`)
@@ -1079,16 +1209,12 @@ export default function AiInterviewRoomPage() {
         );
         return;
       }
-      // The interviewer speaks first: greet the candidate and ask question one.
-      channel.send(
-        JSON.stringify({
-          type: "response.create",
-          response: {
-            instructions:
-              "Greet the candidate warmly by name if you know it, say in one short sentence that you'll be running a short screening interview, then ask your first question exactly as written in your set. Two sentences plus the question, nothing more. No explanation of the question, no reassurance, no preamble.",
-          },
-        }),
-      );
+      /* The interviewer speaks first, and says only the scripted greeting. The
+         interview itself does not begin until the candidate has confirmed they
+         can hear it — see `handleAudioCheckReply`. */
+      openingStage.current = "audio_check";
+      audioCheckTries.current = 0;
+      speakExactly(greetingLine());
     };
 
     const offer = await peer.createOffer();

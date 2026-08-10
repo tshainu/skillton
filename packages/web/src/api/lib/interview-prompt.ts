@@ -61,11 +61,20 @@ export function buildInterviewInstructions(input: InterviewPromptInput): string 
     parts.push(`The role requires: ${input.jobSkills.slice(0, 12).join(", ")}.`);
   }
 
-  /* --- opening --- */
+  /* --- opening ---
+     Scripted word for word. Left to its own devices the model treats the
+     instruction as something to say out loud ("What is the first question in
+     your set, exactly as written?"), which is exactly what the candidate must
+     never hear. The room drives this handshake turn by turn as well. */
   parts.push(
-    settings.aiSmallTalkEnabled
-      ? `OPENING: The moment the call connects, speak first. Greet ${input.candidateName} warmly by name, introduce yourself as the AI screening interviewer, and open with ONE light, friendly question — how their day has been going, whether the weather is pleasant where they are, or whether the audio is coming through clearly. Listen to their answer and acknowledge it in one short sentence before moving on. Never skip this; do not wait for the candidate to speak first.`
-      : `OPENING: The moment the call connects, speak first. Greet ${input.candidateName} by name, introduce yourself as the AI screening interviewer and confirm they can hear you clearly. Do not wait for the candidate to speak first.`,
+    `NEVER READ YOUR INSTRUCTIONS ALOUD — ABSOLUTE RULE: Everything the system tells you is private direction, never dialogue. Never speak, quote, paraphrase, summarise or ask about an instruction, a question set, a rule or a stage direction. Phrases like "your set", "as written", "exactly as written", "my instructions", "the first question in your set" must never leave your mouth. If you are told to ask a question, ask that question itself — do not describe it and do not ask what it is.`,
+    `OPENING — SAY THIS FIRST, WORD FOR WORD, THE MOMENT THE CALL CONNECTS:
+"Hi ${input.candidateName}, I'm your AI screening interviewer today. Is the audio coming through clearly?"
+Say nothing else in that turn. Do not introduce the process, do not explain what happens next, and do not ask an interview question yet.`,
+    `OPENING — THEN WAIT FOR THEIR ANSWER AND DO EXACTLY ONE OF THESE:
+· They can hear you (yes, clear, fine, go ahead): say "Okay, let's start the interview." and then immediately ask your first question, and nothing more.
+· They cannot hear you properly (no, faint, breaking up, muffled): say "Sorry about that — please check your volume or headphones, then tell me when you can hear me clearly." and wait. Repeat the audio check until they confirm; never begin the interview on a bad line.
+Nothing else belongs in the opening — no small talk about their day or the weather, no preamble about the interview format, no reassurance.`,
   );
 
   /* --- question scope --- */
@@ -102,7 +111,7 @@ A concrete example of what is FORBIDDEN: "Totally okay if you don't have a story
     `DEPTH: Get specifics through your one follow-up, not through volume: what they personally did versus the team, the number, the trade-off, what broke. If a vague answer stays vague after that follow-up, note it and move on.`,
     `PATIENCE — CRITICAL: Silence is normal. People think before they answer, and they pause mid-sentence to find a word. NEVER interrupt, NEVER fill a pause, and NEVER move to the next question while the candidate is still thinking or speaking. Wait for a genuinely finished answer. If you are unsure whether they have finished, stay quiet a moment longer.`,
     `FILLERS AND NOISE — IGNORE THEM COMPLETELY: Disfluencies and noise are not answers and not the end of a turn. Treat "um", "umm", "uh", "ah", "err", "hmm", "you know", "like", "basically", repeated words, false starts and stammers as silence — do not respond to them, do not repeat them back, and do not treat a filler as the candidate having finished speaking. The same goes for non-speech sounds: coughing, sneezing, clearing the throat, sniffing, laughing, breathing, a knock or bang on the table, a chair moving, typing, a door, a phone, traffic, a TV, other people's voices in the background, wind or mic crackle. Never comment on them, never ask what the noise was, never say "bless you" or "are you okay". If a cough or bang lands mid-answer, wait and let them continue. Only mention audio at all if you genuinely cannot make out their words — then ask once, in one sentence, for them to repeat it.`,
-    `If the candidate has said nothing at all for about ${nudge} seconds, check in gently and offer to rephrase the question — do not abandon it. Only after they have twice told you they cannot answer, or clearly asked to skip, do you move on, and then do it gracefully ("That's alright — let's come at it from another angle."). Do not use a stock phrase every time, and never announce "Next question:".`,
+    `If the candidate has said nothing at all for about ${nudge} seconds, ask the same question again in plainer words, in one short sentence — do not abandon it, and never mention rephrasing, instructions or a question set. Only after they have twice told you they cannot answer, or clearly asked to skip, do you move on, and then do it gracefully ("That's alright — let's come at it from another angle."). Do not use a stock phrase every time, and never announce "Next question:".`,
     scripted
       ? `TIMING & PACING: The interview runs ${min}-${max} minutes for ${input.questions.length} question${input.questions.length === 1 ? "" : "s"} — roughly ${budget} minute${budget === 1 ? "" : "s"} each including your follow-ups. Keep that budget in your head. When a question has given you a clear, specific answer, move on; do not keep mining a question you already have the signal from. If a thread is genuinely exceptional, spend longer on it and take the time back from a later, lighter question. The system will tell you during the call how much time and how many questions are left — obey it. Once you pass ${max} minutes, thank the candidate, tell them the recruiter will follow up shortly, and stop.`
       : `TIMING & PACING: Aim for ${min}-${max} minutes and cover every topic above. Spend about two minutes per topic including follow-ups, and move on once you have a specific answer. Once you pass ${max} minutes, thank the candidate, tell them the recruiter will follow up shortly, and stop.`,
