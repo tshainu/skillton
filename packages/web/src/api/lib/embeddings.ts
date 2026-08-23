@@ -1,11 +1,19 @@
 /**
- * Semantic vectors. OpenAI `text-embedding-3-small` (1536 dims) when a key is
+ * Semantic vectors. OpenAI `text-embedding-3-large` (3072 dims) when a key is
  * available, with a deterministic hashed bag-of-words fallback so matching still
  * works offline / without a key. Vectors are always L2-normalized, so cosine
  * similarity is a plain dot product.
+ *
+ * DIMENSIONS ARE PART OF THE STORED DATA. `cosine()` scores any two vectors of
+ * different length as 0, so a stored 1536-dim vector from `3-small` silently
+ * matches nothing against a fresh 3072-dim one. Changing EMBED_MODEL therefore
+ * invalidates every embedding already in the database: re-embed all candidates
+ * and job descriptions after a change, or match scores quietly collapse to the
+ * keyword-only component.
  */
 
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
+const EMBED_MODEL = "text-embedding-3-large";
 const FALLBACK_DIMS = 512;
 
 function normalize(vec: number[]): number[] {
@@ -51,7 +59,7 @@ export async function embed(text: string): Promise<number[]> {
         "Content-Type": "application/json",
         Authorization: `Bearer ${OPENAI_KEY}`,
       },
-      body: JSON.stringify({ model: "text-embedding-3-small", input }),
+      body: JSON.stringify({ model: EMBED_MODEL, input }),
     });
     if (!res.ok) throw new Error(`embeddings ${res.status}`);
     const json = (await res.json()) as { data: { embedding: number[] }[] };

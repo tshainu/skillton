@@ -244,3 +244,11 @@ Live at **https://skillton.69-169-97-195.sslip.io** with a real trusted cert.
 - Prompt: QUESTION SCOPE absolute, FOLLOW-UP BUDGET, "NEVER SUGGEST/PROMPT/SUPPLY AN ANSWER", "DO NOT INTERRUPT" with non-terminal pause signals.
 - Room: pacing marks, silence nudge and proctoring `warn()` no longer fire while the candidate is speaking (`warn` retries up to 30s, then relies on the banner).
 - Verified: typecheck / conventions / build pass; regrade of aii_2i4unboy380jw8tz went 3-flat -> 4/3/2/6/2/2 with evidence per dimension; Playwright Results tab + full report modal, zero console errors.
+
+## Round: models -> GPT-5.6 Sol + text-embedding-3-large
+- `PARSE_MODEL` / `REASON_MODEL` = `openai/gpt-5.6-sol` (verified against the gateway before shipping: 2.6s round trip. `openai/gpt-5.6-Sol` and `openai/gpt-5-6-sol` also resolve; `-soll` does not).
+- Embeddings: `text-embedding-3-large`, 3072 dims (was `3-small`, 1536). Introduced an `EMBED_MODEL` constant — the model name was hardcoded a second time in the fetch body, so the header comment and the actual request could drift apart.
+- DIMENSION HAZARD, documented in embeddings.ts: `cosine()` returns 0 for vectors of different length, so stale 1536-dim vectors silently match nothing and match scores collapse to the keyword-only component. Re-embedded all 13 existing rows (6 candidates, 7 job descriptions) 1536 -> 3072.
+- `3-large` costs ~3x latency on embed (1765ms vs 551ms); irrelevant, embedding happens on upload not per request.
+- OUTSTANDING: 42 rows in `cv_jd_matches` still hold similarity computed from the old vectors. Rerunning them means 42 LLM explain calls, so it is left as an explicit decision.
+- Verified: typecheck / check-conventions / build all pass.
