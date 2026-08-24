@@ -418,6 +418,8 @@ export default function AiInterviewRoomPage() {
   const openingStage = useRef<"audio_check" | "warm_up_how" | "warm_up_work" | "interviewing">("audio_check");
   /** Unclear replies to the audio check, so the room stops asking eventually. */
   const audioCheckTries = useRef<number>(0);
+  /** Committed interviewer turns, used to spot the model answering for itself. */
+  const aiTurnCount = useRef<number>(0);
   /**
    * Where the current answer is in its lifecycle, plus the log of every answer
    * cycle in the sitting. Held explicitly because the premature-wrap bug is
@@ -436,6 +438,13 @@ export default function AiInterviewRoomPage() {
   /** The recruiter's question set, and which of its questions have been asked. */
   const questionsRef = useRef<string[]>([]);
   const askedRef = useRef<Set<number>>(new Set());
+  /**
+   * Which asked questions have actually been ANSWERED. Asked is not answered,
+   * and conflating the two is what closed the call on top of a candidate who
+   * was still thinking about the last question: the set read as covered the
+   * moment the question left the interviewer's mouth.
+   */
+  const answeredRef = useRef<Set<number>>(new Set());
   /** Moment the set became fully covered, so the close can be forced after it settles. */
   const coveredAt = useRef<number>(0);
   /** True once the room has told the interviewer to close on its own initiative. */
@@ -537,7 +546,14 @@ export default function AiInterviewRoomPage() {
         aiRevealed.current = 0;
         aiComplete.current = false;
         setAiShown("");
-        if (text) record("ai", text);
+        if (text) {
+          record("ai", text);
+          /* Counts committed interviewer turns, so a scripted line the room is
+             holding can tell whether the model has already spoken since the
+             trigger — that race is what said the greeting and the warm-up
+             question twice in a row. */
+          aiTurnCount.current += 1;
+        }
       }
     }, TICK_MS);
     return () => window.clearInterval(timer);
@@ -686,14 +702,31 @@ export default function AiInterviewRoomPage() {
          The interviewer should have closed the call itself; when it does not,
          the room takes over — it asks for the closing words and then hangs up on
          its own timer, so finishing the interview is never the candidate's job. */
+      /* ASKED IS NOT ANSWERED. This gate used to need only 7 seconds of quiet
+         since the candidate last spoke — which is satisfied the instant the
+         last question is asked, because the candidate has by definition not
+         answered it yet. The room then delivered the closing over the top of
+         somebody who was still thinking. Every question must now be answered,
+         the candidate must have spoken AFTER the set was completed, and no
+         answer may be held open mid-thought. */
+      const allAnswered =
+        questionsRef.current.length > 0 && answeredRef.current.size >= questionsRef.current.length;
+      const spokeSinceCovered = lastSpeechAt.current > coveredAt.current;
+      const answerSettled =
+        answerState.current !== "candidate_speaking" &&
+        answerState.current !== "waiting_for_continuation" &&
+        answerState.current !== "possible_answer_end";
       if (
         !wrapUpSent.current &&
         coveredAt.current > 0 &&
+        allAnswered &&
+        spokeSinceCovered &&
+        answerSettled &&
         !aiSpeaking.current &&
         !userSpeaking.current &&
         !pendingAi.current.trim() &&
         Date.now() - coveredAt.current > COVERAGE_SETTLE_MS &&
-        Date.now() - (lastSpeechAt.current || coveredAt.current) > COVERAGE_SETTLE_MS
+        Date.now() - lastSpeechAt.current > COVERAGE_SETTLE_MS
       ) {
         if (!forcedCloseSent.current) {
           /* First pass: ask for a proper goodbye and let it play out. */
@@ -1209,6 +1242,11 @@ export default function AiInterviewRoomPage() {
   function speakExactly(line: string, andThen = "") {
     const channel = dc.current;
     if (!channel || channel.readyState !== "open") return;
+    /* Kill anything the model has in flight first. With `create_response: true`
+       the model answers the candidate's turn on its own, so a scripted line sent
+       on top of it produced two interviewer turns back to back — the greeting
+       and the warm-up question were both said twice on the real sitting. */
+    channel.send(JSON.stringify({ type: "response.cancel" }));
     channel.send(
       JSON.stringify({
         type: "response.create",
@@ -1315,12 +1353,18 @@ export default function AiInterviewRoomPage() {
    */
   function speakIfSilent(line: string, andThen = "") {
     const waitingSince = Date.now();
+    const turnsAtTrigger = aiTurnCount.current;
     let quietSince = 0;
     const tick = () => {
       if (endingRef.current || phaseRef.current === "done") return;
       /* The interviewer said it itself — nothing to add, and saying it again
          would be a second voice on top of a turn that already worked. */
       if (aiSpeaking.current || pendingAi.current.trim()) return;
+      /* It already SAID a whole turn while this line was waiting. On the real
+         sitting that is how the greeting and the warm-up question each landed
+         twice: the model's own answer finished, the buffer cleared, and the
+         room then spoke its scripted copy into the gap. */
+      if (aiTurnCount.current > turnsAtTrigger) return;
       const outOfPatience = Date.now() - waitingSince > SPEAK_WAIT_LIMIT_MS;
       const talking = userSpeaking.current || Date.now() - lastSpeechAt.current < SPEAK_SETTLE_MS;
       if (talking && !outOfPatience) {
@@ -1409,6 +1453,9 @@ export default function AiInterviewRoomPage() {
       cycle.completionReason = reason;
       cycle.transcript = transcript;
       answerLog.current.push(cycle);
+      /* The question on the floor now counts as ANSWERED, which is a different
+         thing from asked and is what the closing gates read. */
+      if (cycle.questionIndex >= 0) answeredRef.current.add(cycle.questionIndex);
       answerCycle.current = null;
     }
     setAnswerState("answer_complete", reason);
@@ -1466,9 +1513,20 @@ export default function AiInterviewRoomPage() {
    */
   function requestCompletion(source: string) {
     const remaining = questionsRef.current.length - askedRef.current.size;
+    /* Asked but not answered is not finished. The last question is the one this
+       matters for: the interviewer asks it, the candidate takes a moment to
+       think, and the model treats its own question as the end of the interview.
+       That is exactly what happened on the real sitting this gate was written
+       for — the closing words landed on top of the answer. */
+    const unanswered = askedRef.current.size - answeredRef.current.size;
+    const answerInFlight =
+      answerState.current === "candidate_speaking" ||
+      answerState.current === "waiting_for_continuation" ||
+      answerState.current === "possible_answer_end";
     const candidateWantsOut = stopRequested.current;
     const roomForcedIt = wrapUpSent.current || forcedCloseSent.current;
-    const blocked = remaining > 0 && !candidateWantsOut && !roomForcedIt;
+    const blocked =
+      (remaining > 0 || unanswered > 0 || answerInFlight) && !candidateWantsOut && !roomForcedIt;
     // eslint-disable-next-line no-console
     console.info("[interview:completion]", {
       source,

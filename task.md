@@ -384,3 +384,43 @@ rewires every turn in a live product; not worth it unless the supervision proves
 insufficient. §16's ten acceptance interviews can only be run by a human.
 
 Shipped as `cb08237`; deployed and confirmed on the VPS.
+
+## Round: the real premature close, found in Kisshokumar Asokumar's transcript
+
+The user reported the interviewer still jumping ahead while the candidate was
+answering. Pulled the sitting (`aii_1ff83cd67oim8jl8`, 155s, completed) and the
+transcript showed it exactly:
+
+```
+[ai] The company wants the network to keep working even if one device fails...
+[ai] Thank you, Kisshokumar Asokumar, for your time today. The recruitment team...
+[candidate] I want to implement the redundancy.
+[candidate] Why are you disturbing me?
+```
+
+Three separate faults, all now fixed.
+
+**1. Asked was being treated as answered.** The coverage forced-close gate only
+required `Date.now() - lastSpeechAt > COVERAGE_SETTLE_MS`. That condition is
+satisfied the instant the last question is asked, because the candidate has by
+definition not answered it yet — seven seconds of thinking time and the room
+delivered the closing over the top of them. New `answeredRef` tracks which
+questions actually received an answer (credited in `completeAnswer`), and the
+gate now needs every question answered, the candidate to have spoken AFTER
+coverage was reached, and no answer held open mid-thought.
+
+**2. `requestCompletion` had the same hole.** All four questions were asked, so
+`remaining === 0` and the model's `end_interview` was accepted while the last
+answer was still coming. It now also refuses on `unanswered > 0` or an answer in
+flight.
+
+**3. The greeting and the warm-up question were each said twice.** With
+`create_response: true` the model answers the candidate's turn on its own, and
+the room's scripted line went out on top of it. `speakExactly` now cancels any
+in-flight response first, and `speakIfSilent` bails if a whole interviewer turn
+was committed while it was waiting (`aiTurnCount`).
+
+Also visible in that transcript and worth the user knowing: the recruiter's set
+holds 5 questions but `MAX_QUESTIONS = 4`, so question 5 was never asked and
+`topic_coverage` records it as "not asked" with score 0. That is the cap working
+as designed, not a bug.
