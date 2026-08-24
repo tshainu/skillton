@@ -5,6 +5,7 @@ import { db } from "../database";
 import * as schema from "../database/schema";
 import { newId } from "../lib/ids";
 import { adminOnly, audit, authed } from "../middleware/auth";
+import { linkJobToClient } from "../lib/client-link";
 
 const clientInput = z.object({
   companyName: z.string().min(1),
@@ -83,7 +84,43 @@ export const clients = {
       .from(schema.jobDescriptions)
       .where(eq(schema.jobDescriptions.clientId, input.id))
       .orderBy(desc(schema.jobDescriptions.createdAt));
-    return { client, jobs };
+
+    /* Split rather than filter. A closed or filled role is history the account
+       manager still needs, so it stays available — just not mixed in with what
+       is actually open and being worked on. */
+    const isDone = (status: string) => status === "closed" || status === "filled";
+    return {
+      client,
+      jobs,
+      openJobs: jobs.filter((j) => !isDone(j.status)),
+      closedJobs: jobs.filter((j) => isDone(j.status)),
+    };
+  }),
+
+  /**
+   * Derive client records from the job descriptions that already name them.
+   * Existing links are never overwritten, so this is safe to run repeatedly.
+   */
+  linkFromJobs: authed.handler(async ({ context }) => {
+    const jobRows = await db
+      .select()
+      .from(schema.jobDescriptions)
+      .where(eq(schema.jobDescriptions.agencyId, context.agencyId));
+
+    let linked = 0;
+    let created = 0;
+    const unresolved: string[] = [];
+    for (const job of jobRows) {
+      const result = await linkJobToClient(context.agencyId, job);
+      if (result.source === "none") unresolved.push(job.title);
+      else if (result.source !== "existing-link") linked++;
+      if (result.created) created++;
+    }
+    await audit(context.user, "client.linkedFromJobs", "client", context.agencyId, {
+      linked,
+      created,
+    });
+    return { scanned: jobRows.length, linked, created, unresolved };
   }),
 
   create: authed.input(clientInput).handler(async ({ input, context }) => {

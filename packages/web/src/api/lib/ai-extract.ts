@@ -28,6 +28,12 @@ const cvSchema = z.object({
 
 const jdSchema = z.object({
   summary: z.string(),
+  companyName: z
+    .string()
+    .nullable()
+    .describe(
+      "The hiring company the role is for. Null unless the document names it — never guess, and never return the recruitment agency's own name.",
+    ),
   skills: z.array(z.string()).describe("Required skills stated in the document"),
   technologies: z.array(z.string()),
   certifications: z.array(z.string()),
@@ -162,6 +168,7 @@ export async function parseJd(text: string, title: string): Promise<ParsedJd> {
     });
     return {
       ...object,
+      companyName: object.companyName ?? undefined,
       minExperienceYears: object.minExperienceYears ?? undefined,
       education: object.education ?? undefined,
       location: object.location ?? undefined,

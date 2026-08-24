@@ -8,6 +8,7 @@ import { extractFromKey } from "../lib/extract";
 import { parseJd } from "../lib/ai-extract";
 import { embed } from "../lib/embeddings";
 import { audit, authed, timeline } from "../middleware/auth";
+import { linkJobToClient } from "../lib/client-link";
 import { isExpired } from "../lib/scoring";
 import { formatSalaryRange, SALARY_PERIODS } from "../lib/currency";
 
@@ -81,6 +82,15 @@ async function ingestJd(jobId: string, title: string) {
     .update(schema.jobDescriptions)
     .set({ jdText: text, parsed, skillsRequired: skills, jdVector: vector })
     .where(eq(schema.jobDescriptions.id, jobId));
+
+  /* The JD names its own client — derive the link instead of making a recruiter
+     retype a company that is already written in the title or the document. */
+  const [ingested] = await db
+    .select()
+    .from(schema.jobDescriptions)
+    .where(eq(schema.jobDescriptions.id, jobId))
+    .limit(1);
+  if (ingested) await linkJobToClient(ingested.agencyId, ingested);
 }
 
 export const jobs = {

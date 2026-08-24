@@ -191,6 +191,8 @@ export const jobDescriptions = sqliteTable(
 
 export interface ParsedJd {
   summary?: string;
+  /** Hiring company named in the JD document, when it names one. */
+  companyName?: string;
   skills?: string[];
   technologies?: string[];
   certifications?: string[];

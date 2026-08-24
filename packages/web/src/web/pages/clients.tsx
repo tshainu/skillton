@@ -1,6 +1,16 @@
 import { useState } from "react";
 import { Link } from "wouter";
-import { Briefcase, Building2, Mail, Phone, Plus, Trash2, Trophy } from "lucide-react";
+import {
+  Briefcase,
+  Building2,
+  ChevronDown,
+  Link2,
+  Mail,
+  Phone,
+  Plus,
+  Trash2,
+  Trophy,
+} from "lucide-react";
 import { Card, CardContent } from "../components/ui/card";
 import { PageHeader } from "../components/ui/page";
 import { Button } from "../components/ui/button";
@@ -9,7 +19,14 @@ import { Field, Input, Select, Textarea } from "../components/ui/field";
 import { EmptyState, ErrorNote, LoadingBlock, Spinner } from "../components/ui/feedback";
 import { Modal } from "../components/ui/modal";
 import { useConfirm, useToast } from "../components/ui/toast";
-import { useClients, useCreateClient, useDeleteClient, useUpdateClient } from "../queries/clients";
+import {
+  useClient,
+  useClients,
+  useCreateClient,
+  useDeleteClient,
+  useLinkClientsFromJobs,
+  useUpdateClient,
+} from "../queries/clients";
 
 interface FormState {
   id?: string;
@@ -85,7 +102,9 @@ export default function ClientsPage() {
   const create = useCreateClient();
   const update = useUpdateClient();
   const remove = useDeleteClient();
+  const linkFromJobs = useLinkClientsFromJobs();
 
+  const [detailId, setDetailId] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY);
   const [error, setError] = useState<string | null>(null);
@@ -146,15 +165,47 @@ export default function ClientsPage() {
         title="Clients"
         subtitle="The companies you hire for. Culture notes and preferences feed the AI match explanations and interview prompts."
         actions={
-          <Button
-            onClick={() => {
-              setForm(EMPTY);
-              setOpen(true);
-            }}
-            className="glow-primary"
-          >
-            <Plus className="size-4" /> New client
-          </Button>
+          <>
+            {/* Every JD already names its client, in the title or the document.
+                Deriving beats asking a recruiter to retype what is on file. */}
+            <Button
+              variant="ghost"
+              disabled={linkFromJobs.isPending}
+              onClick={() =>
+                linkFromJobs.mutate(
+                  {},
+                  {
+                    onSuccess: (r) =>
+                      toast({
+                        tone: r.linked || r.created ? "success" : "info",
+                        title: r.created
+                          ? `${r.created} client${r.created === 1 ? "" : "s"} created`
+                          : r.linked
+                            ? `${r.linked} job${r.linked === 1 ? "" : "s"} linked`
+                            : "Nothing new to link",
+                        description: r.unresolved.length
+                          ? `${r.unresolved.length} JD${r.unresolved.length === 1 ? "" : "s"} name no client — set those by hand.`
+                          : `Scanned ${r.scanned} job description${r.scanned === 1 ? "" : "s"}.`,
+                      }),
+                    onError: (error) =>
+                      toast({ tone: "error", title: "Link failed", description: error.message }),
+                  },
+                )
+              }
+            >
+              <Link2 className="size-4" />
+              {linkFromJobs.isPending ? "Scanning JDs…" : "Derive from JDs"}
+            </Button>
+            <Button
+              onClick={() => {
+                setForm(EMPTY);
+                setOpen(true);
+              }}
+              className="glow-primary"
+            >
+              <Plus className="size-4" /> New client
+            </Button>
+          </>
         }
       />
 
@@ -227,12 +278,13 @@ export default function ClientsPage() {
                 <span className="text-muted-foreground">placed</span>
               </span>
               <div className="ml-auto flex items-center gap-1">
-                <Link
-                  to={`/jobs?client=${client.id}`}
+                <button
+                  type="button"
+                  onClick={() => setDetailId(client.id)}
                   className="rounded-md border border-border px-2 py-1 text-[11px] transition-colors hover:border-border-hover"
                 >
                   Jobs
-                </Link>
+                </button>
                 <button
                   type="button"
                   onClick={() =>
@@ -297,6 +349,8 @@ export default function ClientsPage() {
           </Card>
         ))}
       </div>
+
+      <ClientJobsModal id={detailId} onClose={() => setDetailId(null)} />
 
       <Modal
         open={open}
@@ -531,5 +585,100 @@ export default function ClientsPage() {
         </div>
       </Modal>
     </>
+  );
+}
+
+/**
+ * The job descriptions belonging to one client, open work first.
+ *
+ * Closed and filled roles are collapsed rather than dropped: an account manager
+ * still needs the history, but it must not compete for attention with the roles
+ * actually being worked on.
+ */
+function ClientJobsModal({ id, onClose }: { id: string | null; onClose: () => void }) {
+  const detail = useClient(id ?? "");
+  const [showClosed, setShowClosed] = useState(false);
+  const open = Boolean(id);
+  const data = detail.data;
+  const openJobs = data?.openJobs ?? [];
+  const closedJobs = data?.closedJobs ?? [];
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      width="max-w-2xl"
+      title={data?.client.companyName ?? "Client"}
+      description="Job descriptions attached to this client."
+      footer={
+        <Button variant="ghost" onClick={onClose}>
+          Close
+        </Button>
+      }
+    >
+      {detail.isLoading && <LoadingBlock rows={3} />}
+      {detail.error && <ErrorNote message={detail.error.message} />}
+
+      {data && (
+        <div className="space-y-4">
+          <div>
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Open roles — {openJobs.length}
+            </p>
+            {openJobs.length === 0 ? (
+              <p className="text-[12px] text-muted-foreground">
+                Nothing open for this client right now.
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                {openJobs.map((job) => (
+                  <Link
+                    key={job.id}
+                    to={`/jobs/${job.id}`}
+                    onClick={onClose}
+                    className="flex items-center gap-2 rounded-md border border-border px-2.5 py-2 text-[12px] transition-colors hover:border-border-hover"
+                  >
+                    <Briefcase className="size-3.5 shrink-0 text-info" />
+                    <span className="truncate">{job.title}</span>
+                    <Badge className="ml-auto shrink-0">{job.status.replace(/_/g, " ")}</Badge>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {closedJobs.length > 0 && (
+            <div className="border-t border-border pt-3">
+              <button
+                type="button"
+                onClick={() => setShowClosed((v) => !v)}
+                className="flex w-full items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <ChevronDown
+                  className={`size-3.5 transition-transform ${showClosed ? "" : "-rotate-90"}`}
+                />
+                Closed and filled — {closedJobs.length}
+              </button>
+              {showClosed && (
+                <div className="mt-2 space-y-1.5">
+                  {closedJobs.map((job) => (
+                    <Link
+                      key={job.id}
+                      to={`/jobs/${job.id}`}
+                      onClick={onClose}
+                      className="flex items-center gap-2 rounded-md border border-border px-2.5 py-2 text-[12px] text-muted-foreground transition-colors hover:border-border-hover"
+                    >
+                      <Briefcase className="size-3.5 shrink-0" />
+                      <span className="truncate">{job.title}</span>
+                      <Badge className="ml-auto shrink-0">{job.status.replace(/_/g, " ")}</Badge>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
   );
 }
