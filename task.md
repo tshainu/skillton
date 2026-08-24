@@ -594,3 +594,38 @@ any of it affect the technical score.
 Worth knowing: `PROFANITY` includes mild words (`shit`, `idiot`). A candidate who
 mutters "oh shit, I've forgotten the command" out of frustration now gets a formal
 warning, and a second slip ends their interview with no human in the loop.
+
+## Round: the evaluation template save button did nothing
+
+Reported as "new evaluation template is not saving". The save path was never
+broken — it was the failure path that was invisible.
+
+The old handler parsed the sections textarea by splitting each line on `|` and
+keeping only lines that produced three or more parts, then bailed out with a bare
+`return` if nothing survived. No error, no toast, no request. Reproduced with
+Playwright: the pipe format saved fine and created a row, while
+`Technical Knowledge - 40%` — how a recruiter actually types it — fired no RPC
+call at all and left the modal sitting there.
+
+Two defects, one symptom:
+
+1. **A single rigid input format.** `parseSectionLine()` now accepts the pipe
+   format, tab-separated, and dash/colon separated (`Name - 40 - A, B`,
+   `Databases: Indexing, Query plans`). The weight is optional and `%` is
+   tolerated; when it is left out, what remains of 100 is split evenly across the
+   sections that did not state one, because defaulting to 0 would silently drop
+   the section out of the weighted score.
+2. **Silent validation.** `submitTemplate()` replaces the bare `return` with a
+   specific message in an `ErrorNote` inside the modal — a missing name, a scale
+   outside 3-100, or a named section with no parameters each say so. A section
+   that names something but lists no parameters now blocks the save rather than
+   being dropped: the recruiter meant to score it.
+
+`mutateAsync` is also wrapped now, so a server rejection reaches the user instead
+of becoming an unhandled promise rejection that looks identical to "nothing
+happened".
+
+Verified against the dev server, four cases: dash format saves, colon format with
+no weights saves, pipe format still saves, and parameterless lines are refused
+with the reason shown. The four probe templates those tests created were deleted
+from `tech_templates` afterwards — the table was empty beforehand.

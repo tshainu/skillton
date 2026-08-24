@@ -23,6 +23,78 @@ import { useSettings } from "../queries/insights";
 
 type Tab = "queue" | "completed" | "templates";
 
+const DEFAULT_SECTIONS =
+  "Technical Knowledge|40|Core concepts, Depth, Tooling\nProblem Solving|35|Approach, Edge cases, Debugging\nCommunication|25|Clarity, Collaboration";
+
+interface ParsedSection {
+  name: string;
+  weight: number | null;
+  parameters: string[];
+}
+
+/**
+ * Parse one hand-typed section line.
+ *
+ * Recruiters type these by hand, so a single rigid format is a trap: the old
+ * parser accepted only "Name|Weight|A, B" and silently discarded anything else,
+ * which is how a filled-in form saved nothing at all. This accepts the pipe
+ * format plus the shapes people actually write — "Name - 40% - A, B",
+ * "Name: 40: A, B", tab-separated — and treats the weight as optional.
+ */
+function parseSectionLine(line: string): ParsedSection | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  const parts = trimmed.includes("|")
+    ? trimmed.split("|")
+    : trimmed.includes("\t")
+      ? trimmed.split("\t")
+      : trimmed.split(/\s+[–—-]\s+|\s*:\s*/);
+  const name = (parts[0] ?? "").trim();
+  if (!name) return null;
+
+  let weight: number | null = null;
+  const parameters: string[] = [];
+  for (const piece of parts.slice(1).map((p) => p.trim()).filter(Boolean)) {
+    const asWeight = piece.replace("%", "").trim();
+    /* The first bare number is the weight; everything else is parameters. */
+    if (weight === null && /^\d+(\.\d+)?$/.test(asWeight)) {
+      weight = Number(asWeight);
+      continue;
+    }
+    parameters.push(...piece.split(/[,/]/).map((p) => p.trim()).filter(Boolean));
+  }
+  return { name, weight, parameters };
+}
+
+/**
+ * Turn the textarea into sections the API will accept, and report exactly which
+ * lines are unusable instead of dropping them. A line that names a section but
+ * lists no parameters is a problem, never a silent omission — the recruiter
+ * meant to score that section.
+ */
+function parseSections(raw: string): { sections: ParsedSection[]; problems: string[] } {
+  const parsed = raw
+    .split("\n")
+    .map(parseSectionLine)
+    .filter((s): s is ParsedSection => s !== null);
+
+  const problems = parsed
+    .filter((s) => s.parameters.length === 0)
+    .map((s) => `"${s.name}" has no parameters — list them after the weight, separated by commas.`);
+
+  const usable = parsed.filter((s) => s.parameters.length > 0);
+  /* An omitted weight splits what is left of 100 evenly rather than defaulting
+     to zero, which would quietly exclude the section from the score. */
+  const claimed = usable.reduce((sum, s) => sum + (s.weight ?? 0), 0);
+  const missing = usable.filter((s) => s.weight === null).length;
+  const share = missing ? Math.round((Math.max(0, 100 - claimed) / missing) * 10) / 10 : 0;
+
+  return {
+    sections: usable.map((s) => ({ ...s, weight: s.weight ?? share })),
+    problems,
+  };
+}
+
 export default function TechInterviewsPage() {
   const queue = useTechQueue();
   const list = useTechInterviews();
@@ -48,12 +120,60 @@ export default function TechInterviewsPage() {
   const [result, setResult] = useState<{ total: number; final: number | null } | null>(null);
 
   const [tplOpen, setTplOpen] = useState(false);
+  const [tplError, setTplError] = useState<string | null>(null);
   const [tplForm, setTplForm] = useState({
     name: "",
     ratingScaleMax: 10,
     isDefault: false,
-    sections: "Technical Knowledge|40|Core concepts, Depth, Tooling\nProblem Solving|35|Approach, Edge cases, Debugging\nCommunication|25|Clarity, Collaboration",
+    sections: DEFAULT_SECTIONS,
   });
+
+  const closeTemplateModal = () => {
+    setTplOpen(false);
+    setTplError(null);
+  };
+
+  /**
+   * Save the template, and say out loud why it did not save when it does not.
+   * The previous version bailed out silently on any unparseable section, so a
+   * filled-in form met a button that did nothing at all.
+   */
+  const submitTemplate = async () => {
+    setTplError(null);
+    const name = tplForm.name.trim();
+    if (!name) {
+      setTplError("Give the template a name.");
+      return;
+    }
+    const scale = tplForm.ratingScaleMax;
+    if (!Number.isFinite(scale) || scale < 3 || scale > 100) {
+      setTplError("Rating scale max must be a number between 3 and 100.");
+      return;
+    }
+    const { sections, problems } = parseSections(tplForm.sections);
+    if (problems.length) {
+      setTplError(problems[0]!);
+      return;
+    }
+    if (!sections.length) {
+      setTplError(
+        'Add at least one section — a name, a weight, then the parameters. For example: "Technical Knowledge | 40 | Core concepts, Depth".',
+      );
+      return;
+    }
+    try {
+      await saveTemplate.mutateAsync({
+        name,
+        ratingScaleMax: scale,
+        sections: sections.map((s) => ({ ...s, weight: s.weight ?? 0 })),
+        isDefault: tplForm.isDefault,
+      });
+      setTplForm({ name: "", ratingScaleMax: 10, isDefault: false, sections: DEFAULT_SECTIONS });
+      closeTemplateModal();
+    } catch (err) {
+      setTplError(err instanceof Error ? err.message : "Could not save the template. Please try again.");
+    }
+  };
 
   const candidate = useMemo(() => (queue.data ?? []).find((c) => c.id === activeId) ?? null, [queue.data, activeId]);
   const template = (templates.data ?? []).find((t) => t.id === templateId) ?? templates.data?.[0] ?? null;
@@ -488,44 +608,23 @@ export default function TechInterviewsPage() {
       {/* Template editor */}
       <Modal
         open={tplOpen}
-        onClose={() => setTplOpen(false)}
+        onClose={closeTemplateModal}
         title="New evaluation template"
-        description="One section per line: Name|Weight|Parameter, Parameter, Parameter"
+        description="One section per line: Name | Weight | Parameter, Parameter. A dash or colon works too, and the weight can be left out."
         width="max-w-xl"
         footer={
           <>
-            <Button variant="ghost" onClick={() => setTplOpen(false)}>
+            <Button variant="ghost" onClick={closeTemplateModal}>
               Cancel
             </Button>
-            <Button
-              onClick={async () => {
-                const sections = tplForm.sections
-                  .split("\n")
-                  .map((line) => line.split("|"))
-                  .filter((parts) => parts.length >= 3)
-                  .map((parts) => ({
-                    name: parts[0]!.trim(),
-                    weight: Number(parts[1]!.trim()) || 0,
-                    parameters: parts[2]!.split(",").map((p) => p.trim()).filter(Boolean),
-                  }))
-                  .filter((s) => s.name && s.parameters.length > 0);
-                if (!tplForm.name.trim() || sections.length === 0) return;
-                await saveTemplate.mutateAsync({
-                  name: tplForm.name.trim(),
-                  ratingScaleMax: tplForm.ratingScaleMax,
-                  sections,
-                  isDefault: tplForm.isDefault,
-                });
-                setTplOpen(false);
-              }}
-              disabled={saveTemplate.isPending}
-            >
+            <Button onClick={submitTemplate} disabled={saveTemplate.isPending}>
               {saveTemplate.isPending && <Spinner />} Save template
             </Button>
           </>
         }
       >
         <div className="space-y-3.5">
+          {tplError && <ErrorNote message={tplError} />}
           <Field label="Template name">
             <Input
               value={tplForm.name}
