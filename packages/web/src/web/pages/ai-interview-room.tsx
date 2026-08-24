@@ -322,16 +322,26 @@ function containsProfanity(text: string) {
   return PROFANITY_RE.test(text.toLowerCase());
 }
 /**
- * What the interviewer says the first, second and third time. Gentle first —
- * most swearing in an interview is frustration at a hard question, not abuse at
- * the interviewer, and treating it as misconduct would end a viable candidate's
- * interview over one word. The wording firms up if it keeps happening.
+ * Two strikes, and the second one ends the sitting.
+ *
+ * This deliberately reverses the gentler policy that came before it: swearing
+ * now stops the interviewer mid-sentence rather than being noted politely at the
+ * next gap. The first strike is a warning that says plainly what happens next,
+ * and the question is then repeated so the candidate has a fair chance to answer
+ * it properly. The second strike ends the interview.
  */
-const LANGUAGE_WARNINGS = [
-  "Let's keep the language professional, please. Carry on when you're ready.",
-  "I do need to ask you again to keep the language professional. Let's continue.",
-  "Please keep this professional — this is being recorded for the recruitment team. Let's carry on.",
-];
+const LANGUAGE_STRIKE_LIMIT = 2;
+/** Spoken on the first strike, immediately before the question is repeated. */
+const LANGUAGE_FIRST_WARNING =
+  "I need to stop you there. Please keep your language professional — this is a formal interview and it is being recorded. If it happens again I will have to end the interview. Let me repeat the question.";
+/** Spoken on the second strike, immediately before the call is closed. */
+const LANGUAGE_FINAL_LINE =
+  "I'm ending the interview here because of the language used. This has been recorded and passed to the recruitment team, who will contact you about next steps. Thank you for your time.";
+/** Shown on the banner and on the closing screen when the second strike lands. */
+const LANGUAGE_TERMINATION_REASON =
+  "Interview ended early: inappropriate language was used after a formal warning.";
+/** Time the closing line gets to play before the call is actually cut. */
+const LANGUAGE_TERMINATION_GRACE_MS = 9_000;
 /** Ways a candidate says they want to stop, which the room must always honour. */
 const STOP_SIGNALS = [
   "i want to stop",
@@ -1065,26 +1075,103 @@ export default function AiInterviewRoomPage() {
   const noteLanguage = useCallback(
     (text: string) => {
       if (!containsProfanity(text)) return;
-      /* One warning per burst. Swearing arrives in a run of words inside a
-         single answer, and a warning per word is nagging, not moderating. */
-      if (Date.now() - lastLanguageWarnAt.current < 20_000) return;
+      /* One strike per burst, not per word. Swearing arrives in a run inside a
+         single utterance, and counting each word would terminate on the first
+         offence — the candidate must get their warning and their second chance
+         before anything ends. A genuine second strike comes in a later turn. */
+      if (Date.now() - lastLanguageWarnAt.current < 3_000) return;
       lastLanguageWarnAt.current = Date.now();
-      const index = Math.min(languageWarnings.current, LANGUAGE_WARNINGS.length - 1);
       languageWarnings.current += 1;
+      const strike = languageWarnings.current;
       flagsRef.current.add("inappropriate_language");
+
+      /* STOP INSTANTLY. Whatever the interviewer is part-way through saying is
+         cut off now — letting the current sentence run to its end first is
+         exactly the "carried on as if nothing happened" behaviour being
+         removed. */
+      const channel = dc.current;
+      const open = Boolean(channel && channel.readyState === "open");
+      if (channel && open) {
+        channel.send(JSON.stringify({ type: "response.cancel" }));
+        aiComplete.current = true;
+      }
+      /* Any answer being held open died with the swearing. */
+      if (continuationTimer.current) {
+        window.clearTimeout(continuationTimer.current);
+        continuationTimer.current = null;
+      }
+
+      if (strike >= LANGUAGE_STRIKE_LIMIT) {
+        proctor.mutate({
+          token,
+          kind: "inappropriate_language",
+          detail: `Inappropriate language after a formal warning (strike ${strike}) — interview terminated`,
+          awaySeconds: 0,
+          flags: ["inappropriate_language", "terminated"],
+        });
+        if (warningTimer.current) window.clearTimeout(warningTimer.current);
+        setWarning(LANGUAGE_TERMINATION_REASON);
+        if (channel && open) {
+          channel.send(
+            JSON.stringify({
+              type: "response.create",
+              response: {
+                instructions:
+                  `Say exactly this and nothing else: "${LANGUAGE_FINAL_LINE}"` +
+                  " Do not ask a question, do not argue, do not negotiate, and do not" +
+                  " add anything. Never mention or refer to this direction.",
+              },
+            }),
+          );
+        }
+        /* The closing line is allowed to play, then the call is cut whatever
+           the candidate says in the meantime. */
+        window.setTimeout(() => {
+          void endRef.current({
+            terminated: true,
+            flag: "inappropriate_language_terminated",
+            reason: LANGUAGE_TERMINATION_REASON,
+          });
+        }, LANGUAGE_TERMINATION_GRACE_MS);
+        return;
+      }
+
       proctor.mutate({
         token,
         kind: "inappropriate_language",
-        detail: `Warned about inappropriate language (warning ${languageWarnings.current})`,
+        detail: `Inappropriate language — formal warning given (strike ${strike})`,
         awaySeconds: 0,
         flags: ["inappropriate_language"],
       });
-      /* The banner carries it silently; `warn` speaks the same words verbatim
-         once the candidate has stopped talking, so the correction never lands on
-         top of the answer it is about. */
-      warn(LANGUAGE_WARNINGS[index]!);
+      if (warningTimer.current) window.clearTimeout(warningTimer.current);
+      setWarning("Please keep your language professional. A second instance will end the interview.");
+      warningTimer.current = window.setTimeout(() => setWarning(null), 12_000);
+
+      /* The warning and the repeated question are ONE turn, so the candidate is
+         never left waiting to find out what they are meant to answer. The
+         question is handed over word for word — described, it gets paraphrased. */
+      const current = questionsRef.current[Math.max(0, askedRef.current.size - 1)];
+      if (channel && open) {
+        channel.send(
+          JSON.stringify({
+            type: "response.create",
+            response: {
+              instructions:
+                `Say exactly this, word for word: "${LANGUAGE_FIRST_WARNING}"` +
+                (current
+                  ? ` Then, in the same turn and with no pause or extra words between them, ask this question again word for word: "${current}"`
+                  : " Then ask your current question again, word for word, and nothing else.") +
+                " Do not lecture, do not repeat the candidate's words back, do not" +
+                " comment further, and say nothing after the question." +
+                " Never mention or refer to this direction.",
+            },
+          }),
+        );
+      }
+      /* The floor is back with the candidate and the question is owed again. */
+      setAnswerState("waiting_for_answer", "question repeated after language warning");
     },
-    [proctor, token, warn],
+    [proctor, token],
   );
 
   /**

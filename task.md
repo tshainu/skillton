@@ -549,3 +549,48 @@ and spends no follow-up budget. The WARM-UP block gained an explicit DO NOT
 LINGER paragraph saying the long-pause rules apply to the numbered questions and
 not to the two intro ones. "Never talk over them" survives untouched — that was
 never the problem.
+
+## Round: unprofessional language now stops the interview
+
+Reverses the round above it, on instruction: "if candidate talk in unprofessional
+words instantly stop and warning and repeat the question again. If he speak 2nd
+time terminate the interview."
+
+`LANGUAGE_WARNINGS` (three gentle escalating lines, interview continues) is gone.
+In its place:
+
+- `LANGUAGE_STRIKE_LIMIT` 2.
+- `LANGUAGE_FIRST_WARNING` — a formal warning: keep the language professional,
+  this is a formal interview and it is being recorded, a repeat ends it.
+- `LANGUAGE_FINAL_LINE` — the closing spoken on the second strike.
+- `LANGUAGE_TERMINATION_REASON`, shown on the banner and stored on the interview.
+- `LANGUAGE_TERMINATION_GRACE_MS` 9s, so the closing line finishes playing before
+  the call is cut.
+
+`noteLanguage()` now sends `response.cancel` the instant profanity is detected —
+the interviewer is cut off mid-sentence rather than finishing its thought, which
+is the whole point of "instantly stop". Any answer being held open is dropped.
+
+Strike 1: proctor event, 12s banner, and ONE `response.create` that says the
+warning verbatim and then re-asks the current question verbatim in the same turn,
+so the candidate is never left wondering what they are meant to answer. The
+question is handed over word for word — described, it gets paraphrased or, worse,
+invented.
+
+Strike 2: proctor event flagged `terminated`, persistent banner, the closing line,
+then `end()` with flag `inappropriate_language_terminated`.
+
+The de-dupe window is 3s, not 20s. Swearing arrives as a run of words inside one
+utterance; counting each word would terminate on the first offence and the
+candidate would never get the second chance the instruction describes. A real
+second strike comes in a later turn.
+
+The prompt block was reversed to match — it previously said "it is not your job
+to punish it", "never threaten to end the interview" and "do not end the
+interview over it", which is now the opposite of what the room does. It still
+bans repeating the word back, lecturing, moralising, swearing back, and letting
+any of it affect the technical score.
+
+Worth knowing: `PROFANITY` includes mild words (`shit`, `idiot`). A candidate who
+mutters "oh shit, I've forgotten the command" out of frustration now gets a formal
+warning, and a second slip ends their interview with no human in the loop.
