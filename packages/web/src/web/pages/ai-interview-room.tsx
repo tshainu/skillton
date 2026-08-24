@@ -122,6 +122,136 @@ const SPEAK_SETTLE_MS = 1_800;
  */
 const SPEAK_WAIT_LIMIT_MS = 20_000;
 /**
+ * How long an answer that ended mid-thought is given to resume before the room
+ * treats the pause as real. "We fixed it by…" followed by four seconds of
+ * silence is a candidate still thinking, not an answer — the room waits rather
+ * than letting the turn be scored as finished.
+ */
+const CONTINUATION_WAIT_MS = 4_000;
+/**
+ * Silence after an unfinished thought before the room gently checks in. One
+ * check-in per answer, never a new question — jumping to the next question here
+ * is how a half-given answer got lost.
+ */
+const CONTINUATION_CHECK_IN_MS = 9_000;
+/**
+ * Words and phrases that mean the candidate is mid-thought: an answer ending on
+ * any of them is not finished, whatever the silence that follows says.
+ */
+const TRAILING_WORDS = new Set([
+  "and",
+  "but",
+  "so",
+  "because",
+  "which",
+  "that",
+  "the",
+  "a",
+  "an",
+  "to",
+  "for",
+  "with",
+  "of",
+  "in",
+  "on",
+  "at",
+  "by",
+  "from",
+  "was",
+  "were",
+  "is",
+  "are",
+  "my",
+  "our",
+  "their",
+  "like",
+  "about",
+  "using",
+  "um",
+  "uh",
+  "err",
+  "hmm",
+  "well",
+  "basically",
+  "actually",
+  "maybe",
+  "mainly",
+  "mostly",
+  "then",
+  "when",
+  "where",
+  "how",
+  "if",
+  "or",
+  "also",
+  "just",
+]);
+/** Phrases with which candidates say, in so many words, "I have finished". */
+const DONE_SIGNALS = [
+  "that's it",
+  "thats it",
+  "that's all",
+  "thats all",
+  "that is all",
+  "that's about it",
+  "that's how we",
+  "that's how i",
+  "that's my experience",
+  "thats my experience",
+  "i think that covers it",
+  "that covers it",
+  "yeah that's it",
+  "so that's",
+  "in a nutshell",
+  "that's pretty much it",
+  "thats pretty much it",
+];
+/** Ways a candidate says they want to stop, which the room must always honour. */
+const STOP_SIGNALS = [
+  "i want to stop",
+  "i'd like to stop",
+  "i want to end",
+  "can we stop",
+  "can we end",
+  "let's stop",
+  "i have to go",
+  "i need to go",
+  "i can't continue",
+  "i cannot continue",
+  "i don't want to continue",
+  "end the interview",
+  "stop the interview",
+  "quit the interview",
+];
+/**
+ * The lifecycle of a single answer. Held as an explicit state because guessing
+ * from silence alone is exactly what cut candidates off mid-thought and let a
+ * short reply pass for a finished interview.
+ */
+type AnswerState =
+  | "waiting_for_answer"
+  | "candidate_speaking"
+  | "possible_answer_end"
+  | "waiting_for_continuation"
+  | "answer_complete";
+/** One answer's timings and why it was judged finished, for post-hoc diagnosis. */
+interface AnswerCycle {
+  questionIndex: number;
+  question: string;
+  speechStartedAt: number;
+  speechStoppedAt: number;
+  possibleAnswerEndAt: number;
+  answerCompletedAt: number;
+  completionReason:
+    | "semantic_complete"
+    | "explicit_candidate_completion"
+    | "continuation_timeout"
+    | "candidate_termination"
+    | "";
+  transcript: string;
+  checkIns: number;
+}
+/**
  * Shown to the candidate for any interview-room failure. The real provider error
  * (expired key, no credits, network) is never useful to them and must not leak,
  * so it is sent to the super admin instead.
@@ -288,6 +418,21 @@ export default function AiInterviewRoomPage() {
   const openingStage = useRef<"audio_check" | "warm_up_how" | "warm_up_work" | "interviewing">("audio_check");
   /** Unclear replies to the audio check, so the room stops asking eventually. */
   const audioCheckTries = useRef<number>(0);
+  /**
+   * Where the current answer is in its lifecycle, plus the log of every answer
+   * cycle in the sitting. Held explicitly because the premature-wrap bug is
+   * intermittent: without a state and a reason recorded for every answer there
+   * is nothing to diagnose after the fact.
+   */
+  const answerState = useRef<AnswerState>("waiting_for_answer");
+  const answerCycle = useRef<AnswerCycle | null>(null);
+  const answerLog = useRef<AnswerCycle[]>([]);
+  /** Continuation watchdog for an answer that stopped mid-thought. */
+  const continuationTimer = useRef<number | null>(null);
+  /** Last thing the candidate said, read by the completion gate. */
+  const lastCandidateText = useRef<string>("");
+  /** Set once the candidate has clearly asked to stop, which always ends the call. */
+  const stopRequested = useRef<boolean>(false);
   /** The recruiter's question set, and which of its questions have been asked. */
   const questionsRef = useRef<string[]>([]);
   const askedRef = useRef<Set<number>>(new Set());
@@ -645,6 +790,10 @@ export default function AiInterviewRoomPage() {
          never fire mid-thought. */
       const silentFor = Date.now() - (lastSpeechAt.current || startedAt.current);
       const nudgeAfter = Math.max(limits.silenceNudgeSeconds, 18) * 1000;
+      /* An answer that stopped mid-thought is owned by the continuation
+         watchdog, which waits and then checks in gently. The nudge must not
+         barge in on top of it and re-ask a question they are still answering. */
+      if (answerState.current === "waiting_for_continuation" || answerState.current === "candidate_speaking") return;
       if (!userSpeaking.current && silentFor > nudgeAfter && nudgeCount.current < 12) {
         nudgeCount.current++;
         lastSpeechAt.current = Date.now();
@@ -1192,6 +1341,177 @@ export default function AiInterviewRoomPage() {
   }
 
   /**
+   * Moves the answer lifecycle on and logs the transition. The premature-wrap
+   * bug is intermittent, so every transition is timestamped in the console and
+   * kept in `answerLog` — without a reason recorded per answer there is nothing
+   * to look at afterwards.
+   */
+  function setAnswerState(next: AnswerState, note = "") {
+    if (answerState.current === next) return;
+    answerState.current = next;
+    // eslint-disable-next-line no-console
+    console.info("[interview:answer]", {
+      state: next,
+      note,
+      questionIndex: answerCycle.current?.questionIndex ?? -1,
+      at: new Date().toISOString(),
+      elapsedMs: startedAt.current ? Date.now() - startedAt.current : 0,
+    });
+  }
+
+  /** Opens a fresh answer cycle for the question currently on the floor. */
+  function beginAnswerCycle() {
+    const index = Math.max(0, askedRef.current.size - 1);
+    answerCycle.current = {
+      questionIndex: index,
+      question: questionsRef.current[index] ?? "",
+      speechStartedAt: Date.now(),
+      speechStoppedAt: 0,
+      possibleAnswerEndAt: 0,
+      answerCompletedAt: 0,
+      completionReason: "",
+      transcript: "",
+      checkIns: 0,
+    };
+  }
+
+  /**
+   * Whether the candidate's thought is actually finished. Silence alone is not
+   * evidence: "we fixed it by…" followed by four seconds of quiet is somebody
+   * thinking, and treating that as a complete answer is what let a half-given
+   * answer be scored and the interview move on.
+   */
+  function answerCompleteness(text: string): { complete: boolean; reason: AnswerCycle["completionReason"] } {
+    const clean = text.trim().toLowerCase();
+    if (!clean) return { complete: false, reason: "" };
+    if (DONE_SIGNALS.some((signal) => clean.endsWith(signal) || clean.includes(`${signal}.`))) {
+      return { complete: true, reason: "explicit_candidate_completion" };
+    }
+    const words = clean.replace(/[.,!?;:]+$/g, "").split(/\s+/).filter(Boolean);
+    const last = words[words.length - 1] ?? "";
+    /* Ends on a connector, a preposition or a filler: they are mid-sentence. */
+    if (TRAILING_WORDS.has(last)) return { complete: false, reason: "" };
+    /* A couple of words with no terminal punctuation is a false start, not an
+       answer — "I mainly worked", "so in my". */
+    if (words.length < 4 && !/[.!?]$/.test(clean)) return { complete: false, reason: "" };
+    return { complete: true, reason: "semantic_complete" };
+  }
+
+  /** Closes the current answer cycle and files it with the reason it ended. */
+  function completeAnswer(reason: AnswerCycle["completionReason"], transcript: string) {
+    if (continuationTimer.current) {
+      window.clearTimeout(continuationTimer.current);
+      continuationTimer.current = null;
+    }
+    const cycle = answerCycle.current;
+    if (cycle) {
+      cycle.answerCompletedAt = Date.now();
+      cycle.completionReason = reason;
+      cycle.transcript = transcript;
+      answerLog.current.push(cycle);
+      answerCycle.current = null;
+    }
+    setAnswerState("answer_complete", reason);
+    /* The next question is owed from here on, so the room stops treating this
+       answer as live and waits for the interviewer's next turn. */
+    setAnswerState("waiting_for_answer", "next question owed");
+  }
+
+  /**
+   * Judges the candidate's finished utterance and either lets the turn stand or
+   * holds the answer open. An unfinished thought gets a real wait and then one
+   * gentle check-in — never the next question, which is how the rest of an
+   * answer used to be lost.
+   */
+  function assessAnswer(text: string) {
+    if (openingStage.current !== "interviewing") return;
+    const cycle = answerCycle.current;
+    if (cycle) {
+      cycle.speechStoppedAt = Date.now();
+      cycle.possibleAnswerEndAt = Date.now();
+      cycle.transcript = cycle.transcript ? `${cycle.transcript} ${text}`.trim() : text;
+    }
+    setAnswerState("possible_answer_end", text.slice(-60));
+    const verdict = answerCompleteness(cycle?.transcript ?? text);
+    if (verdict.complete) {
+      completeAnswer(verdict.reason, cycle?.transcript ?? text);
+      return;
+    }
+    /* Mid-thought. Hold the answer open and let them come back to it. */
+    setAnswerState("waiting_for_continuation", "answer ended mid-thought");
+    if (continuationTimer.current) window.clearTimeout(continuationTimer.current);
+    continuationTimer.current = window.setTimeout(() => {
+      continuationTimer.current = null;
+      if (endingRef.current || phaseRef.current !== "live") return;
+      if (answerState.current !== "waiting_for_continuation") return;
+      if (userSpeaking.current) return;
+      const quiet = Date.now() - lastSpeechAt.current;
+      if (quiet < CONTINUATION_WAIT_MS) return;
+      const open = answerCycle.current;
+      if (quiet >= CONTINUATION_CHECK_IN_MS && open && open.checkIns < 1) {
+        /* They trailed off and nothing came back. One gentle check-in, never a
+           new question. */
+        open.checkIns += 1;
+        speakIfSilent("Take your time — would you like to carry on?");
+        return;
+      }
+      completeAnswer("continuation_timeout", open?.transcript ?? text);
+    }, CONTINUATION_CHECK_IN_MS);
+  }
+
+  /**
+   * The one authoritative way this interview finishes. The interviewer may only
+   * REQUEST an ending; a short answer, an "I don't know", a pause or a model that
+   * simply feels done must never close a sitting with questions left in it.
+   */
+  function requestCompletion(source: string) {
+    const remaining = questionsRef.current.length - askedRef.current.size;
+    const candidateWantsOut = stopRequested.current;
+    const roomForcedIt = wrapUpSent.current || forcedCloseSent.current;
+    const blocked = remaining > 0 && !candidateWantsOut && !roomForcedIt;
+    // eslint-disable-next-line no-console
+    console.info("[interview:completion]", {
+      source,
+      remaining,
+      asked: askedRef.current.size,
+      total: questionsRef.current.length,
+      answerState: answerState.current,
+      candidateWantsOut,
+      roomForcedIt,
+      decision: blocked ? "refused" : "accepted",
+      at: new Date().toISOString(),
+    });
+    if (blocked) {
+      /* Refused. The interviewer is put straight back on the next unasked
+         question rather than left to argue about it. */
+      const next = questionsRef.current.findIndex((_, index) => !askedRef.current.has(index));
+      const question = next === -1 ? "" : questionsRef.current[next];
+      proctor.mutate({
+        token,
+        kind: "premature_close_blocked",
+        detail: `Interviewer tried to end with ${remaining} question(s) unasked (${source})`,
+        awaySeconds: 0,
+        flags: [],
+      });
+      const channel = dc.current;
+      if (channel && channel.readyState === "open") {
+        channel.send(
+          JSON.stringify({
+            type: "response.create",
+            response: {
+              instructions: question
+                ? `The interview is NOT finished — ${remaining} question${remaining === 1 ? "" : "s"} remain in your set, so the request to end has been refused. Do not close the call, do not mention this and do not say goodbye. Ask this question now, word for word, with no preamble: "${question}"`
+                : "The interview is not finished. Do not close the call and do not say goodbye — continue with the question you were on.",
+            },
+          }),
+        );
+      }
+      return;
+    }
+    if (!completionRequested.current) completionRequested.current = Date.now();
+  }
+
+  /**
    * Marks off any question from the set that this utterance just asked. Coverage
    * is what lets the room end the interview on its own once the set is done,
    * instead of leaving the candidate to hang up.
@@ -1373,7 +1693,9 @@ export default function AiInterviewRoomPage() {
             msg.type === "response.output_item.done" ||
             msg.type === "conversation.item.created")
         ) {
-          if (!completionRequested.current) completionRequested.current = Date.now();
+          /* A request, never a decision. `requestCompletion` refuses it while
+             questions remain and puts the interviewer back on the next one. */
+          requestCompletion("model_tool_call");
         }
         if (msg.type === "output_audio_buffer.started" || msg.type === "response.output_audio.delta") {
           aiSpeaking.current = true;
@@ -1388,6 +1710,16 @@ export default function AiInterviewRoomPage() {
           userSpeaking.current = true;
           userSpeechStartedAt.current = Date.now();
           setOrbState("listening");
+          /* Speech during a held-open answer is the rest of that answer, not a
+             new one — the cycle carries on and its watchdog is stood down. */
+          if (openingStage.current === "interviewing") {
+            if (continuationTimer.current) {
+              window.clearTimeout(continuationTimer.current);
+              continuationTimer.current = null;
+            }
+            if (!answerCycle.current) beginAnswerCycle();
+            setAnswerState("candidate_speaking");
+          }
           /* The candidate has the floor. Short bursts are ignored (see
              BARGE_IN_MS) but sustained speech stops the interviewer talking
              over them — the API's own interrupt is off precisely so that a
@@ -1429,12 +1761,24 @@ export default function AiInterviewRoomPage() {
           const text = (msg.transcript ?? pendingUser.current).trim();
           pendingUser.current = "";
           if (text) record("candidate", text);
+          if (text) {
+            lastCandidateText.current = text;
+            const lowered = text.toLowerCase();
+            /* A candidate who asks to stop is always let out — this is the one
+               thing that may end a sitting with questions left in it. */
+            if (STOP_SIGNALS.some((signal) => lowered.includes(signal))) {
+              stopRequested.current = true;
+            }
+          }
           /* Still on the opening handshake: this reply decides whether the
              interview starts or the candidate is asked to fix their audio. */
           if (text && openingStage.current === "audio_check") handleAudioCheckReply(text);
           /* Warm-up: their answer is the cue for the next warm-up turn, and
              then for the interview itself. */
           else if (text && openingStage.current !== "interviewing") handleWarmUpReply();
+          /* Interview proper: decide whether that was a finished thought or a
+             pause mid-answer, rather than letting silence decide it. */
+          else if (text) assessAnswer(text);
         }
       } catch {
         /* ignore non-JSON frames */

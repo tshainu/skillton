@@ -254,7 +254,7 @@ app.post("/api/ai-interview/session", async (c) => {
               type: "function",
               name: "end_interview",
               description:
-                "Call this immediately after you have spoken your closing words, once every question in your set has been asked and answered (or the candidate has ended the conversation). Ends the call and submits the interview. Never call it before your closing words, and never call it while questions remain.",
+                "REQUEST to end the interview, called immediately after you have spoken your closing words, once every question in your set has been asked and answered (or the candidate has clearly asked to stop). This is a request, not a decision: the application verifies the interview is genuinely complete and will refuse it while any question remains, and it will then tell you to continue. Never call it because an answer was short, because the candidate paused, or because you feel you have heard enough.",
               parameters: {
                 type: "object",
                 properties: {

@@ -1097,6 +1097,10 @@ export const aiInterviews = {
           "warning_shown",
           "resumed",
           "positive_signal",
+          /* The interviewer asked to end while questions were still unasked and
+             the room refused. Logged because premature wrapping is intermittent
+             and otherwise leaves no trace. */
+          "premature_close_blocked",
         ]),
         detail: z.string().max(300).optional(),
         awaySeconds: z.number().min(0).max(3600).default(0),
