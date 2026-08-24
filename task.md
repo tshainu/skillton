@@ -424,3 +424,52 @@ Also visible in that transcript and worth the user knowing: the recruiter's set
 holds 5 questions but `MAX_QUESTIONS = 4`, so question 5 was never asked and
 `topic_coverage` records it as "not asked" with score 0. That is the cap working
 as designed, not a bug.
+
+## Round: the lag was three bugs, not slowness (from the Dulip sitting)
+
+Analysed `aii_ivfw3538ykq9f4jx` (137s, 18 turns). The candidate's turnaround was
+never the problem — the model answered in 1.2-1.8s every time. Three separate
+faults produced the dead air and the broken feel.
+
+**1. A proctor warning hijacked the interviewer and invented a question.** A
+1-second tab-away fired the focus-loss warning while the audio check was still
+unanswered, and the model said:
+
+> You briefly left the interview screen for 1 second... Alright, let's move
+> forward with the next part of the interview. Tell me about a recent project
+> you worked on that you're proud of, and what made it successful.
+
+That question is not in the set, and it cost 7 seconds. Cause: `warn()` asked the
+model to deliver the message "in your own words" and then "continue the interview
+from where you were" — an open invitation to invent. It is now verbatim, with an
+explicit ban on adding a question, and it is never spoken at all before
+`openingStage === "interviewing"`. The on-screen banner still fires immediately.
+
+**2. Question four was cut off, then asked again five seconds later.** The
+previous round made `speakExactly` cancel any in-flight response to stop double
+greetings. Cancelling unconditionally truncated the model's own turn mid-sentence
+("…if one device or connection fails.") and it had to re-ask. It now cancels only
+when the model is genuinely speaking, and queues the scripted line 250ms behind
+the cancel so the two do not race.
+
+**3. Every scripted line paid ~3s of dead air before it started.** 900ms initial
+delay + 1.8s settle + 400ms polling. Now 350ms + 1.1s + 220ms.
+
+**The closing now has to say the team will be in touch.** The sitting ended on
+"Thanks, Dulip. I'll close things out and note next steps for you." — which tells
+the candidate nothing. Both room-driven closings (questions done, and time up)
+and the prompt's ENDING block now require, in so many words, that our
+recruitment team will review the interview and contact them about next steps.
+
+**The wrap-up screen is no longer a bare spinner.** "Wrapping up and preparing
+your summary…" became a titled panel: responses are being saved, keep this
+window open and it will close automatically, the team will review and contact
+you, and contact your HR representative if anything went wrong during the
+interview.
+
+**`MAX_QUESTIONS` 4 -> 6.** Last round this was written up as the cap working as
+designed. It is not defensible: the recruiters' live sets hold 5 questions, so
+question 5 was never asked and the grader then recorded it as "not asked" with
+coverage 0 — scoring a candidate on a question they were never given. It also
+ended sittings in ~2 minutes against a 10-15 minute window. The cap now clears a
+standard five-question set and still guards an oversized one.

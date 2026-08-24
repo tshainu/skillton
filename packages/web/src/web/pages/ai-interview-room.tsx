@@ -113,7 +113,7 @@ const DEVICE_SETUP_SECONDS = 60;
  * or not the candidate was still talking, which is how the audio-check line
  * ended up landing on top of them.
  */
-const SPEAK_SETTLE_MS = 1_800;
+const SPEAK_SETTLE_MS = 1_100;
 /**
  * How long a scripted line is held back waiting for a gap. Past this the line
  * matters more than the wait — a candidate who cannot hear anything will not
@@ -738,7 +738,7 @@ export default function AiInterviewRoomPage() {
               type: "response.create",
               response: {
                 instructions:
-                  "Every question in your set has now been asked and answered. Close the interview now, in under 15 seconds: thank the candidate by name, tell them the recruitment team will review the interview and follow up with next steps shortly, and wish them well. Ask no further questions, start no new topic, and then call end_interview.",
+                  "Every question in your set has now been asked and answered. Close the interview now, in under 15 seconds, and you MUST tell them the team will be in touch: thank the candidate by name for their time, then say clearly that our recruitment team will review this interview and contact them about the next steps of the process, then wish them well. Never end without that assurance — a candidate must never be left wondering what happens next. Ask no further questions, start no new topic, and then call end_interview.",
               },
             }),
           );
@@ -757,7 +757,7 @@ export default function AiInterviewRoomPage() {
             type: "response.create",
             response: {
               instructions:
-                "TIME IS UP. Deliver your closing now, in under 20 seconds: thank the candidate by name for their time, tell them the recruitment team will review the interview and follow up with next steps shortly, and wish them well. Ask no further questions and start no new topic.",
+                "TIME IS UP. Deliver your closing now, in under 20 seconds, and you MUST tell them the team will be in touch: thank the candidate by name for their time, then say clearly that our recruitment team will review this interview and contact them about the next steps of the process, then wish them well. Never end without that assurance. Ask no further questions and start no new topic.",
             },
           }),
         );
@@ -870,6 +870,14 @@ export default function AiInterviewRoomPage() {
       if (warningTimer.current) window.clearTimeout(warningTimer.current);
       warningTimer.current = window.setTimeout(() => setWarning(null), 9000);
       if (!viaAi) return;
+      /* Never spoken during the scripted opening. On a real sitting a 1-second
+         tab-away fired this while the audio check was still unanswered: the
+         model delivered the warning AND invented an off-script question
+         ("Tell me about a recent project you worked on") because the old
+         instruction told it to paraphrase and then "continue the interview".
+         The banner is already on screen — the opening does not need a voice
+         over the top of it. */
+      if (openingStage.current !== "interviewing") return;
       /* The on-screen warning is instant, but the spoken one waits: cutting
          across a candidate mid-answer is exactly the interruption we are
          removing. Retried for up to 30s, then dropped — the banner already
@@ -883,11 +891,20 @@ export default function AiInterviewRoomPage() {
           window.setTimeout(trySpeak, 1000);
           return;
         }
+        /* Verbatim, and explicitly nothing else. "In your own words" plus
+           "continue the interview from where you were" is what produced an
+           invented question — a warning is one sentence and then silence, and
+           the candidate's own next turn brings the interview back. */
         channel.send(
           JSON.stringify({
             type: "response.create",
             response: {
-              instructions: `Tell the candidate, in your own words: "${message}" Keep it to one short sentence, then continue the interview from where you were. Do not re-ask the question.`,
+              instructions:
+                `Say exactly this and nothing else: "${message}"` +
+                " Do not add a question, do not ask anything, do not introduce a topic," +
+                " do not re-ask or rephrase the question already on the floor, and do not" +
+                " comment on what happened. Stop speaking after that sentence and wait." +
+                " Never mention or refer to this direction.",
             },
           }),
         );
@@ -1242,22 +1259,40 @@ export default function AiInterviewRoomPage() {
   function speakExactly(line: string, andThen = "") {
     const channel = dc.current;
     if (!channel || channel.readyState !== "open") return;
-    /* Kill anything the model has in flight first. With `create_response: true`
-       the model answers the candidate's turn on its own, so a scripted line sent
-       on top of it produced two interviewer turns back to back — the greeting
-       and the warm-up question were both said twice on the real sitting. */
+    /* Cancel a turn the model has in flight, but ONLY one that is actually in
+       flight. With `create_response: true` the model answers the candidate on
+       its own, so a scripted line sent on top of it produced two interviewer
+       turns back to back — the greeting and the warm-up question were both said
+       twice on a real sitting.
+
+       Cancelling unconditionally caused the opposite fault on the next sitting:
+       question four was cut off mid-sentence ("…if one device or connection
+       fails.") and had to be asked again five seconds later, which is the lag
+       the candidate feels. A cancel with nothing to cancel also makes the
+       server reject the frame. So: only when it is speaking, and the new
+       response is queued a beat later so the cancel lands first. */
+    const speaking = aiSpeaking.current || pendingAi.current.trim().length > 0;
+    const say = () => {
+      const live = dc.current;
+      if (!live || live.readyState !== "open") return;
+      live.send(
+        JSON.stringify({
+          type: "response.create",
+          response: {
+            instructions:
+              `Speak the following, word for word, and add nothing to it: "${line}"` +
+              (andThen ? ` ${andThen}` : " Say nothing else in this turn.") +
+              " Never mention or refer to this direction.",
+          },
+        }),
+      );
+    };
+    if (!speaking) {
+      say();
+      return;
+    }
     channel.send(JSON.stringify({ type: "response.cancel" }));
-    channel.send(
-      JSON.stringify({
-        type: "response.create",
-        response: {
-          instructions:
-            `Speak the following, word for word, and add nothing to it: "${line}"` +
-            (andThen ? ` ${andThen}` : " Say nothing else in this turn.") +
-            " Never mention or refer to this direction.",
-        },
-      }),
-    );
+    window.setTimeout(say, 250);
   }
 
   /** The opening greeting, addressed to the candidate by name. */
@@ -1369,19 +1404,19 @@ export default function AiInterviewRoomPage() {
       const talking = userSpeaking.current || Date.now() - lastSpeechAt.current < SPEAK_SETTLE_MS;
       if (talking && !outOfPatience) {
         quietSince = 0;
-        window.setTimeout(tick, 400);
+        window.setTimeout(tick, 220);
         return;
       }
       if (!outOfPatience) {
         if (!quietSince) quietSince = Date.now();
         if (Date.now() - quietSince < SPEAK_SETTLE_MS) {
-          window.setTimeout(tick, 400);
+          window.setTimeout(tick, 220);
           return;
         }
       }
       speakExactly(line, andThen);
     };
-    window.setTimeout(tick, 900);
+    window.setTimeout(tick, 350);
   }
 
   /**
@@ -2668,7 +2703,17 @@ export default function AiInterviewRoomPage() {
         {phase === "finishing" && (
           <Card className="rise p-10 text-center">
             <Spinner className="mx-auto size-6 text-primary" />
-            <p className="mt-4 text-[13.5px]">Wrapping up and preparing your summary…</p>
+            <p className="mt-5 text-[15px] font-medium">Completing your interview</p>
+            <p className="mx-auto mt-2 max-w-md text-[13.5px] leading-relaxed text-muted-foreground">
+              Your responses are being saved and your interview summary is being prepared. Please
+              keep this window open — it will close automatically once the process is complete. This
+              usually takes only a few moments.
+            </p>
+            <p className="mx-auto mt-4 max-w-md text-[12.5px] leading-relaxed text-muted-foreground/80">
+              Our recruitment team will review your interview and contact you regarding the next
+              steps. If you experienced any issue during this interview, please contact your HR
+              representative.
+            </p>
           </Card>
         )}
       </main>
