@@ -299,7 +299,34 @@ export default function AiInterviewRoomPage() {
   const camStream = useRef<MediaStream | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
+  /**
+   * Web Audio graph that mixes BOTH voices into the one audio track the recorder
+   * writes. Without it the evidence file was the candidate talking into silence:
+   * the recorder was handed the raw camera+mic stream, which by definition
+   * cannot contain the interviewer, because the interviewer's voice arrives on a
+   * separate WebRTC track and only ever went to the speaker.
+   */
+  const mixCtx = useRef<AudioContext | null>(null);
+  const mixDest = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const mixAiSource = useRef<MediaStreamAudioSourceNode | null>(null);
   const awayStartedAt = useRef<number>(0);
+  /**
+   * Set only while the interview page is genuinely hidden (minimised, tab
+   * switched). Kept apart from `awayStartedAt` because losing window FOCUS is
+   * not leaving the screen — clicking a second monitor, an OS notification or
+   * the address bar all fire `blur` while the candidate is still sitting there
+   * looking at the interview, and that must never terminate the sitting.
+   */
+  const hiddenStartedAt = useRef<number>(0);
+  /** Consecutive automatic reconnect attempts after a dropped media connection. */
+  const reconnectTries = useRef<number>(0);
+  const reconnecting = useRef<boolean>(false);
+  /**
+   * Phase and transcript read through refs by the reconnect path: it runs from a
+   * WebRTC callback and a timer, which would otherwise close over stale values.
+   */
+  const phaseRef = useRef<Phase>("consent");
+  const turnsRef = useRef<Turn[]>([]);
   const awaySecondsRef = useRef<number>(0);
   const penaltyRef = useRef<number>(0);
   const focusLossRef = useRef<number>(0);
@@ -554,7 +581,7 @@ export default function AiInterviewRoomPage() {
       /* Inactivity. Leaving the interview screen for more than a minute ends the
          interview and flags it — a candidate researching answers in another
          window is the exact behaviour this is here to catch. */
-      if (awayStartedAt.current && Date.now() - awayStartedAt.current > INACTIVITY_LIMIT_MS) {
+      if (hiddenStartedAt.current && Date.now() - hiddenStartedAt.current > INACTIVITY_LIMIT_MS) {
         void endRef.current({
           terminated: true,
           flag: "left_screen_terminated",
@@ -806,14 +833,20 @@ export default function AiInterviewRoomPage() {
     canvas.width = 32;
     canvas.height = 24;
 
-    /** Returns why the picture is unusable, or null when the camera is fine. */
-    function outage(): string | null {
+    /**
+     * Returns why the picture is unusable, or null when the camera is fine.
+     * `fatal` separates a camera that is genuinely gone from one that is merely
+     * dark: a candidate sitting in a dim room, backlit, or in front of a bright
+     * window was being terminated mid-interview for a badly lit picture, which
+     * is a lighting problem and not evidence of cheating.
+     */
+    function outage(): { reason: string; fatal: boolean } | null {
       const track = camStream.current?.getVideoTracks()[0];
-      if (!track) return "no camera track";
-      if (track.readyState !== "live") return "camera disconnected";
-      if (!track.enabled || track.muted) return "camera turned off";
+      if (!track) return { reason: "no camera track", fatal: true };
+      if (track.readyState !== "live") return { reason: "camera disconnected", fatal: true };
+      if (!track.enabled || track.muted) return { reason: "camera turned off", fatal: true };
       const video = camVideo.current;
-      if (!video || video.videoWidth === 0) return "no video signal";
+      if (!video || video.videoWidth === 0) return { reason: "no video signal", fatal: true };
       const ctx = canvas.getContext("2d", { willReadFrequently: true });
       if (!ctx) return null;
       try {
@@ -833,8 +866,8 @@ export default function AiInterviewRoomPage() {
     }
 
     const timer = window.setInterval(() => {
-      const reason = outage();
-      if (!reason) {
+      const problem = outage();
+      if (!problem) {
         if (videoLostAt.current) {
           videoLostAt.current = 0;
           setCameraReady(true);
@@ -846,16 +879,21 @@ export default function AiInterviewRoomPage() {
       if (!videoLostAt.current) {
         videoLostAt.current = Date.now();
         warn(
-          "We can no longer see you. Please turn your camera back on and uncover it — the interview will end if the picture does not come back within 30 seconds.",
+          problem.fatal
+            ? "We can no longer see you. Please turn your camera back on and uncover it — the interview will end if the picture does not come back within 30 seconds."
+            : "We can barely see you — please turn on a light or face a window so the camera can pick you up.",
         );
-        proctor.mutate({ token, kind: "camera_signal", detail: reason, awaySeconds: 0, flags: ["camera_lost"] });
+        proctor.mutate({ token, kind: "camera_signal", detail: problem.reason, awaySeconds: 0, flags: ["camera_lost"] });
         return;
       }
-      if (Date.now() - videoLostAt.current > CAMERA_GRACE_MS) {
+      /* Only a camera that is genuinely gone ends the interview. A dark or badly
+         lit picture is logged and warned about but never terminates the sitting
+         — that was ending real interviews over room lighting. */
+      if (problem.fatal && Date.now() - videoLostAt.current > CAMERA_GRACE_MS) {
         void endRef.current({
           terminated: true,
           flag: "camera_off_terminated",
-          reason: `Camera picture lost for more than ${Math.round(CAMERA_GRACE_MS / 1000)} seconds (${reason}) — interview terminated`,
+          reason: `Camera picture lost for more than ${Math.round(CAMERA_GRACE_MS / 1000)} seconds (${problem.reason}) — interview terminated`,
         });
       }
     }, 2000);
@@ -874,6 +912,13 @@ export default function AiInterviewRoomPage() {
   function teardown() {
     dc.current?.close();
     pc.current?.close();
+    /* The mixer holds the microphone and the interviewer's track; closing it
+       releases both and stops the graph running behind a finished interview. */
+    mixAiSource.current?.disconnect();
+    mixAiSource.current = null;
+    mixDest.current = null;
+    void mixCtx.current?.close().catch(() => undefined);
+    mixCtx.current = null;
     stream.current?.getTracks().forEach((t) => t.stop());
     camStream.current?.getTracks().forEach((t) => t.stop());
     dc.current = null;
@@ -886,15 +931,62 @@ export default function AiInterviewRoomPage() {
   }
 
   /**
-   * Records the candidate's camera and microphone locally for the recruiter's
-   * evidence file. Stopping resolves with the finished blob.
+   * Builds the stream that is actually recorded: the camera picture plus ONE
+   * audio track carrying both the candidate's microphone and the interviewer's
+   * voice. If the mixer cannot be built for any reason the raw stream is used
+   * instead — a recording missing one voice still beats no recording at all.
+   */
+  function recordableStream(media: MediaStream): MediaStream {
+    try {
+      const ctx = new AudioContext();
+      mixCtx.current = ctx;
+      const dest = ctx.createMediaStreamDestination();
+      mixDest.current = dest;
+      /* The candidate's side. The interviewer's side is connected later, from
+         `ontrack`, which cannot fire before the peer connection is answered. */
+      ctx.createMediaStreamSource(media).connect(dest);
+      const mixed = new MediaStream();
+      media.getVideoTracks().forEach((track) => mixed.addTrack(track));
+      dest.stream.getAudioTracks().forEach((track) => mixed.addTrack(track));
+      return mixed.getAudioTracks().length > 0 ? mixed : media;
+    } catch {
+      return media;
+    }
+  }
+
+  /**
+   * Adds the interviewer's voice to the recording mix. Called from `ontrack`,
+   * which always fires after recording has started — that is fine, because the
+   * recorder is holding the mixer's own output track and that track does not
+   * change when a new source is connected behind it.
+   */
+  function attachAiToRecording(remote: MediaStream) {
+    const ctx = mixCtx.current;
+    const dest = mixDest.current;
+    if (!ctx || !dest || remote.getAudioTracks().length === 0) return;
+    try {
+      mixAiSource.current?.disconnect();
+      const source = ctx.createMediaStreamSource(remote);
+      source.connect(dest);
+      mixAiSource.current = source;
+      /* Autoplay policy can leave the context suspended, which would silently
+         record nothing at all from either side. */
+      if (ctx.state === "suspended") void ctx.resume();
+    } catch {
+      /* Speaker playback is unaffected; only the mix would lose this voice. */
+    }
+  }
+
+  /**
+   * Records the candidate's camera plus both voices for the recruiter's evidence
+   * file. Stopping resolves with the finished blob.
    */
   function startRecording(media: MediaStream) {
     const types = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
     const mimeType = types.find((t) => MediaRecorder.isTypeSupported(t));
     if (!mimeType) return;
     chunks.current = [];
-    const rec = new MediaRecorder(media, { mimeType, videoBitsPerSecond: 700_000 });
+    const rec = new MediaRecorder(recordableStream(media), { mimeType, videoBitsPerSecond: 700_000 });
     rec.ondataavailable = (event) => {
       if (event.data.size > 0) chunks.current.push(event.data);
     };
@@ -1024,12 +1116,63 @@ export default function AiInterviewRoomPage() {
    */
   function noteCoverage(spoken: string) {
     if (!spoken.trim() || questionsRef.current.length === 0) return;
-    questionsRef.current.forEach((question, index) => {
-      if (askedRef.current.has(index)) return;
-      if (looksLikeQuestion(question, spoken)) askedRef.current.add(index);
-    });
+    /* Only the NEXT unasked question can be credited, only from an utterance
+       that actually contains a question, and only one per utterance.
+       Previously every question was scored against every utterance, so a
+       follow-up or a re-ask that happened to share words with questions further
+       down the list ticked them off without ever asking them. The set then
+       looked "covered" mid-interview and the room forced the call closed — this
+       is the interview cutting out on the candidate. */
+    if (!spoken.includes("?")) return;
+    const next = questionsRef.current.findIndex((_, index) => !askedRef.current.has(index));
+    if (next === -1) return;
+    if (!looksLikeQuestion(questionsRef.current[next]!, spoken)) return;
+    askedRef.current.add(next);
     if (askedRef.current.size >= questionsRef.current.length && !coveredAt.current) {
       coveredAt.current = Date.now();
+    }
+  }
+
+  /**
+   * Rebuilds a dropped voice connection without ending the interview. The camera,
+   * microphone, recording and clock are all deliberately left running — only the
+   * peer connection and its data channel are replaced, and the transcript so far
+   * is replayed so the interviewer carries on rather than starting again.
+   */
+  async function recoverConnection() {
+    if (endingRef.current || phaseRef.current !== "live") {
+      reconnecting.current = false;
+      return;
+    }
+    if (pc.current?.connectionState === "connected") {
+      reconnecting.current = false;
+      return;
+    }
+    if (reconnectTries.current >= MAX_RECONNECT_TRIES) {
+      /* Out of attempts. Close the interview properly and keep everything said
+         so far, rather than leaving the candidate in a dead room. */
+      reportError.mutate({ token, scope: "voice_connection", message: "Media connection lost and could not be restored" });
+      void endRef.current({ reason: "Voice connection lost and could not be restored — interview closed early" });
+      return;
+    }
+    reconnectTries.current += 1;
+    setWarning("Your connection dropped — reconnecting. Please stay on this page.");
+    try {
+      /* Only the transport goes. Media and recording must survive. */
+      dc.current?.close();
+      pc.current?.close();
+      dc.current = null;
+      pc.current = null;
+      await connectVoice(turnsRef.current);
+      setWarning(null);
+      reconnecting.current = false;
+    } catch {
+      reconnecting.current = false;
+      window.setTimeout(() => {
+        if (pc.current?.connectionState === "connected") return;
+        reconnecting.current = true;
+        void recoverConnection();
+      }, 3000);
     }
   }
 
@@ -1083,10 +1226,33 @@ export default function AiInterviewRoomPage() {
         void camVideo.current.play().catch(() => undefined);
       }
     }
-    startRecording(media);
+    /* A reconnect must never restart the recorder — that would throw away
+       everything recorded before the connection dropped. */
+    if (!recorder.current) startRecording(media);
 
     const peer = new RTCPeerConnection();
     pc.current = peer;
+
+    /* A dropped media connection used to be completely unhandled: the browser
+       tore the call down, the interviewer went silent, and the candidate sat in
+       a dead room until a timer terminated the sitting. Wi-Fi hiccups and
+       network hand-offs are routine, so a drop now reconnects and resumes from
+       the transcript instead of ending the interview. */
+    peer.onconnectionstatechange = () => {
+      if (peer !== pc.current) return;
+      const state = peer.connectionState;
+      if (state === "connected") {
+        reconnectTries.current = 0;
+        reconnecting.current = false;
+        return;
+      }
+      if (state !== "failed" && state !== "disconnected" && state !== "closed") return;
+      if (endingRef.current || completionRequested.current || reconnecting.current) return;
+      reconnecting.current = true;
+      /* `disconnected` is often transient — give ICE a moment to recover on its
+         own before throwing the connection away and building a new one. */
+      window.setTimeout(() => void recoverConnection(), state === "disconnected" ? 4000 : 500);
+    };
 
     peer.ontrack = (event) => {
       const remote = event.streams[0]!;
