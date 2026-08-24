@@ -502,3 +502,50 @@ The prompt gained a matching block so the model behaves the same way if it react
 first: one calm sentence, then straight back to the question. Explicitly banned —
 repeating the word back, lecturing, acting offended, threatening to end the
 interview, swearing back, or letting it affect the assessment.
+
+## Round: two seconds and a check-in, instead of a long silence
+
+The dead air came from waiting in silence to find out whether an answer had
+finished. The room now asks instead. Both halves of this changed.
+
+**Warm-up (the two intro questions): move on fast.** They are small talk —
+nothing is scored, so nothing is lost by moving on. `armWarmUpAdvance()` gives
+about two seconds of quiet after each warm-up line and then advances whether or
+not the candidate replied (`WARM_UP_PAUSE_MS`). A candidate who says nothing to
+"how are you doing today?" now gets the next line instead of a silent room. The
+watchdog never speaks over anybody: while either side has the floor it just keeps
+waiting, and if the candidate does reply their transcript advances the warm-up
+the normal way and the watchdog stands down.
+
+**Interview questions: a short pause, then one check-in, on EVERY answer.** The
+old machine waited `CONTINUATION_WAIT_MS` 4s and then up to
+`CONTINUATION_CHECK_IN_MS` 9s, and only for answers that trailed off mid-sentence
+— a candidate who had plainly finished sat in silence wondering if the line had
+dropped. Both constants are gone. Now:
+
+- `ANSWER_PAUSE_MS` 2s of silence after they stop, then ONE check-in.
+- The wording depends on how the answer sounded, and rotates so it is not the
+  same sentence every question. Trailed off -> `CHECK_IN_UNFINISHED` ("Do you
+  need more time?"). Sounded finished -> `CHECK_IN_FINISHED` ("Is there anything
+  else you'd like to explain?", "Would you like to add anything else?").
+- A short "no" / "that's it" / "I'm done" in reply closes the answer immediately
+  (`meansNothingMore`) and the next question follows.
+- More talking is simply the rest of the answer.
+- Silence for `POST_CHECK_IN_MS` 4s after being asked outright is itself the
+  answer, and the interview moves on.
+- One check-in per answer, ever. An explicit done-signal in the original answer
+  skips it entirely.
+
+`meansNothingMore` only accepts replies of five words or fewer. "No, actually
+there is one more thing — we also rebuilt the failover" opens with "no" and is
+the exact opposite of nothing more.
+
+The prompt was reconciled with all of this, because the old PATIENCE block
+directly contradicted it: "if you are even slightly unsure whether they have
+finished, WAIT LONGER" and "when in doubt, silence" are now "if you are unsure,
+ASK — do not sit there, and do not jump ahead", with the three check-in
+sentences, a once-per-answer cap, and a note that the check-in is not a follow-up
+and spends no follow-up budget. The WARM-UP block gained an explicit DO NOT
+LINGER paragraph saying the long-pause rules apply to the numbered questions and
+not to the two intro ones. "Never talk over them" survives untouched — that was
+never the problem.

@@ -122,18 +122,88 @@ const SPEAK_SETTLE_MS = 1_100;
  */
 const SPEAK_WAIT_LIMIT_MS = 20_000;
 /**
- * How long an answer that ended mid-thought is given to resume before the room
- * treats the pause as real. "We fixed it by…" followed by four seconds of
- * silence is a candidate still thinking, not an answer — the room waits rather
- * than letting the turn be scored as finished.
+ * Silence after the candidate stops before the room checks in on the answer.
+ *
+ * Two seconds, and it applies to EVERY answer rather than only to one that
+ * trailed off mid-sentence. The old design waited 4s and then up to 9s before
+ * saying anything, which is where the dead air came from: a candidate who had
+ * finished sat in silence wondering whether the line had dropped. Now the room
+ * asks a short question instead of waiting — the check-in is what buys the
+ * candidate more time, so the wait before it does not have to.
  */
-const CONTINUATION_WAIT_MS = 4_000;
+const ANSWER_PAUSE_MS = 2_000;
 /**
- * Silence after an unfinished thought before the room gently checks in. One
- * check-in per answer, never a new question — jumping to the next question here
- * is how a half-given answer got lost.
+ * Silence after the check-in before the room accepts that the answer is done and
+ * lets the interview move on. They have been asked whether they want to add
+ * anything; no reply is an answer in itself.
  */
-const CONTINUATION_CHECK_IN_MS = 9_000;
+const POST_CHECK_IN_MS = 4_000;
+/**
+ * Silence during the warm-up before the room moves on regardless.
+ *
+ * The two warm-up turns are small talk, not evidence — nothing is scored and
+ * nothing is lost by moving on. Waiting a real pause here only delays the
+ * interview proper, so a warm-up turn advances the moment the candidate stops,
+ * and advances anyway if they never answer at all.
+ */
+const WARM_UP_PAUSE_MS = 2_000;
+/**
+ * The check-in itself. One short question, chosen by how the answer sounded:
+ * somebody cut off mid-sentence is offered time, somebody who sounded finished
+ * is offered the chance to add to it. Rotated so it is not the same words every
+ * question.
+ */
+const CHECK_IN_UNFINISHED = ["Do you need more time?", "Take your time — would you like to carry on?"];
+const CHECK_IN_FINISHED = [
+  "Is there anything else you'd like to explain?",
+  "Would you like to add anything else?",
+  "Anything else you'd like to add to that?",
+];
+/**
+ * The candidate saying, in reply to the check-in, that they have nothing more.
+ * These end the answer immediately rather than spending the post-check-in wait
+ * on somebody who has already said "no, that's it".
+ */
+const NOTHING_MORE_SIGNALS = [
+  "no",
+  "nope",
+  "no thanks",
+  "no thank you",
+  "nothing",
+  "nothing else",
+  "nothing more",
+  "nothing to add",
+  "that's all",
+  "thats all",
+  "that's it",
+  "thats it",
+  "that's everything",
+  "i'm done",
+  "im done",
+  "i am done",
+  "i'm good",
+  "im good",
+  "i'm fine",
+  "that's enough",
+  "let's move on",
+  "lets move on",
+  "next question",
+  "we can move on",
+  "you can move on",
+];
+/** True when a reply to the check-in means "I have nothing further". */
+function meansNothingMore(text: string) {
+  const clean = text
+    .toLowerCase()
+    .replace(/[^a-z\s']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!clean) return false;
+  /* Only a SHORT reply counts. "No, actually there is one more thing — we also
+     rebuilt the failover" opens with "no" and is the opposite of nothing more. */
+  if (clean.split(" ").length > 5) return false;
+  return NOTHING_MORE_SIGNALS.some((signal) => clean === signal || clean.startsWith(`${signal} `));
+}
 /**
  * Words and phrases that mean the candidate is mid-thought: an answer ending on
  * any of them is not finished, whatever the silence that follows says.
@@ -487,6 +557,10 @@ export default function AiInterviewRoomPage() {
   const answerLog = useRef<AnswerCycle[]>([]);
   /** Continuation watchdog for an answer that stopped mid-thought. */
   const continuationTimer = useRef<number | null>(null);
+  /** Rotates the check-in wording so it is not the same sentence every question. */
+  const checkInTurn = useRef<number>(0);
+  /** Watchdog that moves the warm-up on when the candidate says nothing at all. */
+  const warmUpTimer = useRef<number | null>(null);
   /** Last thing the candidate said, read by the completion gate. */
   const lastCandidateText = useRef<string>("");
   /** Set once the candidate has clearly asked to stop, which always ends the call. */
@@ -1432,6 +1506,46 @@ export default function AiInterviewRoomPage() {
        so the candidate is already talking by the time question one lands. */
     openingStage.current = "warm_up_how";
     speakIfSilent(warmUpHowLine());
+    armWarmUpAdvance();
+  }
+
+  /**
+   * Moves the warm-up on after a short pause whether or not the candidate
+   * replied.
+   *
+   * The warm-up is small talk: nothing in it is scored and nothing is lost by
+   * moving on. Waiting a real pause here only delays the interview proper, so
+   * two seconds of quiet after the question is enough — a candidate who says
+   * nothing to "how are you doing today?" gets the next line rather than a
+   * silent room.
+   */
+  function armWarmUpAdvance() {
+    if (warmUpTimer.current) window.clearTimeout(warmUpTimer.current);
+    const armedAt = Date.now();
+    let quietSince = 0;
+    const tick = () => {
+      warmUpTimer.current = null;
+      if (endingRef.current || phaseRef.current !== "live") return;
+      /* Their reply already moved things on, or the interview proper started. */
+      if (openingStage.current !== "warm_up_how" && openingStage.current !== "warm_up_work") return;
+      /* Never over the top of anybody. While either side has the floor the
+         watchdog just keeps waiting. */
+      if (aiSpeaking.current || pendingAi.current.trim() || userSpeaking.current) {
+        quietSince = 0;
+        warmUpTimer.current = window.setTimeout(tick, 300);
+        return;
+      }
+      /* They spoke since this was armed, so their transcript is on its way and
+         will advance the warm-up properly. */
+      if (lastSpeechAt.current > armedAt) return;
+      if (!quietSince) quietSince = Date.now();
+      if (Date.now() - quietSince < WARM_UP_PAUSE_MS) {
+        warmUpTimer.current = window.setTimeout(tick, 300);
+        return;
+      }
+      handleWarmUpReply();
+    };
+    warmUpTimer.current = window.setTimeout(tick, WARM_UP_PAUSE_MS);
   }
 
   /** Warm-up one: how they are doing, by first name. Not scored, not from the set. */
@@ -1457,9 +1571,14 @@ export default function AiInterviewRoomPage() {
    * becomes a third and fourth question and a discussion of the answer.
    */
   function handleWarmUpReply() {
+    if (warmUpTimer.current) {
+      window.clearTimeout(warmUpTimer.current);
+      warmUpTimer.current = null;
+    }
     if (openingStage.current === "warm_up_how") {
       openingStage.current = "warm_up_work";
       speakIfSilent(warmUpWorkLine());
+      armWarmUpAdvance();
       return;
     }
     /* Warm-up done. The first question is handed over verbatim so it cannot be
@@ -1599,10 +1718,15 @@ export default function AiInterviewRoomPage() {
   }
 
   /**
-   * Judges the candidate's finished utterance and either lets the turn stand or
-   * holds the answer open. An unfinished thought gets a real wait and then one
-   * gentle check-in — never the next question, which is how the rest of an
-   * answer used to be lost.
+   * Judges the candidate's finished utterance and decides between three things:
+   * move on now, check in, or accept that the check-in has been answered.
+   *
+   * Every answer now gets the same treatment — two seconds of silence, then one
+   * short check-in — instead of only the ones that trailed off mid-sentence. The
+   * check-in is what gives the candidate their extra time, so the room no longer
+   * has to buy that time with dead air. The interview only moves on once they
+   * have been asked whether there is more and either said there isn't or said
+   * nothing at all.
    */
   function assessAnswer(text: string) {
     if (openingStage.current !== "interviewing") return;
@@ -1613,31 +1737,61 @@ export default function AiInterviewRoomPage() {
       cycle.transcript = cycle.transcript ? `${cycle.transcript} ${text}`.trim() : text;
     }
     setAnswerState("possible_answer_end", text.slice(-60));
-    const verdict = answerCompleteness(cycle?.transcript ?? text);
-    if (verdict.complete) {
-      completeAnswer(verdict.reason, cycle?.transcript ?? text);
+    const full = cycle?.transcript ?? text;
+    const verdict = answerCompleteness(full);
+
+    /* Already been asked whether there is anything more. A short "no" or "that's
+       it" closes the answer immediately — making somebody who has just said they
+       are finished sit through another wait is the rudeness this is here to
+       remove. Anything longer is more answer, and is judged on its own merits. */
+    if (cycle && cycle.checkIns > 0 && meansNothingMore(text)) {
+      completeAnswer("explicit_candidate_completion", full);
       return;
     }
-    /* Mid-thought. Hold the answer open and let them come back to it. */
-    setAnswerState("waiting_for_continuation", "answer ended mid-thought");
+
+    /* They said in so many words that they are done. No check-in needed. */
+    if (verdict.reason === "explicit_candidate_completion") {
+      completeAnswer(verdict.reason, full);
+      return;
+    }
+
+    /* One check-in per answer. Once it has been asked and answered with more
+       substance, the answer stands on that. */
+    if (cycle && cycle.checkIns > 0) {
+      completeAnswer(verdict.complete ? verdict.reason : "continuation_timeout", full);
+      return;
+    }
+
+    /* Hold the answer open for a short pause, then check in. `complete` no
+       longer decides whether to wait — only which words the check-in uses. */
+    setAnswerState(
+      "waiting_for_continuation",
+      verdict.complete ? "sounded finished, checking in" : "ended mid-thought, checking in",
+    );
     if (continuationTimer.current) window.clearTimeout(continuationTimer.current);
     continuationTimer.current = window.setTimeout(() => {
       continuationTimer.current = null;
       if (endingRef.current || phaseRef.current !== "live") return;
       if (answerState.current !== "waiting_for_continuation") return;
       if (userSpeaking.current) return;
-      const quiet = Date.now() - lastSpeechAt.current;
-      if (quiet < CONTINUATION_WAIT_MS) return;
+      if (Date.now() - lastSpeechAt.current < ANSWER_PAUSE_MS) return;
       const open = answerCycle.current;
-      if (quiet >= CONTINUATION_CHECK_IN_MS && open && open.checkIns < 1) {
-        /* They trailed off and nothing came back. One gentle check-in, never a
-           new question. */
-        open.checkIns += 1;
-        speakIfSilent("Take your time — would you like to carry on?");
-        return;
-      }
-      completeAnswer("continuation_timeout", open?.transcript ?? text);
-    }, CONTINUATION_CHECK_IN_MS);
+      if (!open) return;
+      open.checkIns += 1;
+      const lines = verdict.complete ? CHECK_IN_FINISHED : CHECK_IN_UNFINISHED;
+      const line = lines[checkInTurn.current % lines.length]!;
+      checkInTurn.current += 1;
+      speakIfSilent(line);
+      /* If nothing comes back after being asked outright, that silence is the
+         answer and the interview moves on. */
+      continuationTimer.current = window.setTimeout(() => {
+        continuationTimer.current = null;
+        if (endingRef.current || phaseRef.current !== "live") return;
+        if (answerState.current !== "waiting_for_continuation") return;
+        if (userSpeaking.current) return;
+        completeAnswer("continuation_timeout", answerCycle.current?.transcript ?? full);
+      }, POST_CHECK_IN_MS);
+    }, ANSWER_PAUSE_MS);
   }
 
   /**
