@@ -127,13 +127,6 @@ export default function DashboardPage() {
               tone="info"
             />
             <StatCard
-              label="Live matches"
-              value={data.kpis.liveMatches}
-              hint={`Avg score ${data.kpis.avgMatchScore} · ${data.kpis.shortlisted} shortlisted`}
-              icon={Cpu}
-              tone="success"
-            />
-            <StatCard
               label="Placements"
               value={data.kpis.placements}
               hint={
@@ -230,7 +223,7 @@ export default function DashboardPage() {
               <CardHeader>
                 <div>
                   <CardTitle>Match score distribution</CardTitle>
-                  <p className="text-[12px] text-muted-foreground">Across all live matches</p>
+                  <p className="text-[12px] text-muted-foreground">Across all matches</p>
                 </div>
               </CardHeader>
               <CardContent className="h-[260px] pt-2">

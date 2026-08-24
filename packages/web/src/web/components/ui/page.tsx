@@ -1,7 +1,8 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card } from "./card";
+import { Modal } from "./modal";
 
 export function PageHeader({
   eyebrow,
@@ -117,7 +118,19 @@ export function Tr({
   );
 }
 
-export function ChipList({ items, max = 6, tone }: { items: string[]; max?: number; tone?: "matched" | "missing" }) {
+export function ChipList({
+  items,
+  max = 6,
+  tone,
+  label = "Skills",
+}: {
+  items: string[];
+  max?: number;
+  tone?: "matched" | "missing";
+  /** Heading for the overflow modal, e.g. "Skills missing". */
+  label?: string;
+}) {
+  const [open, setOpen] = useState(false);
   const shown = items.slice(0, max);
   const rest = items.length - shown.length;
   const styles =
@@ -133,7 +146,37 @@ export function ChipList({ items, max = 6, tone }: { items: string[]; max?: numb
           {item}
         </span>
       ))}
-      {rest > 0 && <span className="px-1 py-0.5 text-[11px] text-muted-foreground">+{rest}</span>}
+      {rest > 0 && (
+        <>
+          {/* "+4" means "4 more" — it has to show them, not just count them. */}
+          <button
+            type="button"
+            title={`Show ${rest} more`}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setOpen(true);
+            }}
+            className="rounded px-1 py-0.5 text-[11px] text-muted-foreground underline decoration-dotted underline-offset-2 transition-colors hover:text-primary"
+          >
+            +{rest}
+          </button>
+          <Modal
+            open={open}
+            onClose={() => setOpen(false)}
+            title={label}
+            description={`All ${items.length}`}
+          >
+            <div className="flex flex-wrap gap-1.5">
+              {items.map((item) => (
+                <span key={item} className={cn("rounded border px-2 py-1 text-[12px]", styles)}>
+                  {item}
+                </span>
+              ))}
+            </div>
+          </Modal>
+        </>
+      )}
     </div>
   );
 }

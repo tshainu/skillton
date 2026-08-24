@@ -275,8 +275,11 @@ export default function JobDetailPage() {
                           onClick={() =>
                             setStatus.mutate({
                               id: row.candidate.id,
-                              status: "shortlisted",
-                              stage: "hr_screening",
+                              /* Must match what the JD-CV matrix writes, or the
+                                 candidate never shows up in the screening queue.
+                                 "hr_screening" is a status; the stage is "screening". */
+                              status: "hr_screening",
+                              stage: "screening",
                               note: `Advanced from ${data.title} shortlist`,
                             })
                           }

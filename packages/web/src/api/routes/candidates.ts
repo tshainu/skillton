@@ -12,14 +12,9 @@ import { isExpired, daysUntilExpiry } from "../lib/scoring";
 import { formatMoney, normalizeCurrency } from "../lib/currency";
 import { allocateCidBlock } from "../lib/cid";
 import { ensurePlacement } from "../lib/placement";
+import { CANDIDATE_STAGES, CANDIDATE_STATUSES } from "../lib/candidate-status";
 
-const CANDIDATE_STATUSES = [
-  "new","shortlisted","hr_screening","hr_selected","hr_hold","hr_rejected",
-  "ai_interview_pending","ai_interview_completed","tech_interview_pending",
-  "tech_interview_completed","final_review","offered","hired","rejected","blacklisted",
-] as const;
-
-const STAGES = ["screening", "ai_interview", "tech_interview", "client_review", "decision"] as const;
+const STAGES = CANDIDATE_STAGES;
 
 /** Extract text, AI-parse and embed one uploaded CV. */
 async function ingestCv(candidateId: string) {

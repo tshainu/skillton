@@ -373,8 +373,14 @@ export const matching = {
       ];
       if (input.jdId) where.push(eq(schema.cvJdMatches.jdId, input.jdId));
       if (input.stage) where.push(eq(schema.candidates.currentStage, input.stage));
-      if (input.skill) {
-        const q = `%${input.skill.toLowerCase()}%`;
+      /* "Cisco, Juniper" means both — recruiters type a comma-separated shopping
+         list and expect every term to be present, not a loose OR. */
+      const terms = (input.skill ?? "")
+        .split(",")
+        .map((t) => t.trim().toLowerCase())
+        .filter(Boolean);
+      for (const term of terms) {
+        const q = `%${term}%`;
         where.push(
           sql`(lower(${schema.candidates.skillsExtracted}) like ${q} or lower(${schema.candidates.technologies}) like ${q})`,
         );

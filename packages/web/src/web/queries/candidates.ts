@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { client, orpc } from "../lib/api";
+import type { CandidateStage, CandidateStatus } from "../lib/candidate-status";
 
 export interface CandidateFilters {
   search?: string;
-  status?: string;
-  stage?: string;
+  /** Empty string means "no status filter" — anything else must be a real enum member. */
+  status?: CandidateStatus | "";
+  stage?: CandidateStage | "";
   skill?: string;
   minExperience?: number;
   bucket?: string;
@@ -17,8 +19,8 @@ export function useCandidates(filters: CandidateFilters = {}) {
     orpc.candidates.list.queryOptions({
       input: {
         search: filters.search || undefined,
-        status: filters.status as never,
-        stage: filters.stage as never,
+        status: filters.status || undefined,
+        stage: filters.stage || undefined,
         skill: filters.skill || undefined,
         minExperience: filters.minExperience,
         bucket: filters.bucket || undefined,

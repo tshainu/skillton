@@ -35,6 +35,7 @@ import { useRerunExpired } from "../queries/matching";
 import { useSetBlacklisted } from "../queries/talent";
 import { cn } from "../lib/utils";
 import { BUCKET_CLASS, isBucket, SOURCE_LABEL, titleCase } from "../lib/labels";
+import { CANDIDATE_STATUSES } from "../lib/candidate-status";
 
 interface UploadItem {
   filename: string;
@@ -58,21 +59,13 @@ const COLUMNS = [
 
 type ColumnKey = (typeof COLUMNS)[number]["key"];
 
-const STATUS_OPTIONS = [
-  "",
-  "new",
-  "shortlisted",
-  "hr_screening",
-  "hr_hold",
-  "hr_rejected",
-  "ai_interview_pending",
-  "ai_interview_completed",
-  "tech_interview_pending",
-  "interviewing",
-  "hired",
-  "rejected",
-  "blacklisted",
-];
+/**
+ * Built from the API's own enum: "" is the "all statuses" placeholder, every
+ * other entry is a value the server will accept. Hand-maintaining this list is
+ * what put a non-existent "interviewing" in the dropdown and made the filter
+ * return HTTP 400 instead of candidates.
+ */
+const STATUS_OPTIONS = ["", ...CANDIDATE_STATUSES];
 
 export default function CandidatesPage() {
   const confirm = useConfirm();

@@ -629,3 +629,69 @@ Verified against the dev server, four cases: dash format saves, colon format wit
 no weights saves, pipe format still saves, and parameterless lines are refused
 with the reason shown. The four probe templates those tests created were deleted
 from `tech_templates` afterwards — the table was empty beforehand.
+
+---
+
+## Round: Batch B — the seven reported breakages
+
+Triaged the 111-line improvements list into `plan-v4.md` and started with Batch B
+on instruction: reproduce first, fix only what is genuinely broken. Three of the
+seven turned out to be code defects, one was a UI gap, and three were empty data.
+
+### Fixed in code
+
+1. **Candidate status filter returned nothing.** `STATUS_OPTIONS` in
+   `candidates.tsx` was hand-maintained and had drifted from the server enum: it
+   offered `"interviewing"`, which does not exist, so zod rejected the input and
+   `candidates/list` answered **HTTP 400** — and it was missing four real
+   statuses (`hr_selected`, `tech_interview_completed`, `final_review`,
+   `offered`). `filters.status as never` in `queries/candidates.ts` is what kept
+   TypeScript quiet about it.
+
+   The list now lives in one place, `api/lib/candidate-status.ts`, re-exported to
+   the UI through `web/lib/candidate-status.ts` the same way `currency.ts`
+   already does. The route imports it for its zod enum and the dropdown is built
+   from it, so the two cannot drift again. `CandidateFilters` is typed
+   `CandidateStatus | ""` and both `as never` casts are gone — a bad status is
+   now a compile error rather than a blank table.
+
+2. **"Send to HR screening" on a JD did nothing.** Same class of bug: the button
+   sent `stage: "hr_screening"`, but `hr_screening` is a *status*; the stage enum
+   only knows `screening | ai_interview | tech_interview | client_review |
+   decision`, so the mutation was rejected. It now writes
+   `status: "hr_screening", stage: "screening"` — exactly what the JD-CV matrix
+   writes, which is what `screening.queue` looks for.
+
+3. **Matching engine skill search found nothing.** Not the stale-embedding theory:
+   every one of the 49 match rows scores between 30 and 59, and the search box
+   defaulted `minScore` to **60**, so it filtered out the entire library before
+   the skill term was ever considered. The default is now 0. The term is also
+   split on commas, and every term must be present — a recruiter typing
+   "Cisco, Juniper" means both, not either. Verified: `Cisco` -> 21 rows,
+   `Cisco, Windows` -> 14, `Cisco, Zzzznotaskill` -> 0.
+
+4. **"+4" now shows the four.** `ChipList` rendered the overflow count as an inert
+   `<span>`. It is a button that opens a modal listing every item. Fixing it in
+   the shared component fixes it on all 20 call sites at once.
+
+5. **Dashboard "Live Matches" card removed** as instructed, along with the "Across
+   all live matches" caption that referred to it.
+
+### Not broken — empty data, reported rather than patched
+
+- **Hidden Gems** renders correctly and reports 0 in all four tabs. The page needs
+  candidates who cleared one stage and failed the next; the four technical
+  interviews on file carry no score at all (three `selected`, one `rejected`,
+  `overallScore` null), so nobody meets the blue/purple/green criteria.
+- **AI-selected candidates not reaching Technical.** The wiring is intact. The
+  queue looks for `tech_interview_pending` / `ai_interview_completed`; no
+  candidate currently holds either status — the seven in the database sit at
+  `hr_rejected` (2), `final_review` (2), `rejected`, `new` and `hired`.
+- **CV-JD Match "Client" column empty.** The `clients` table has **0 rows** and all
+  7 JDs have `client_id` NULL. The client name only exists inside the JD title
+  text ("Systems Administrator (The Living Co)"). Nothing to join to.
+
+Verified end to end against the dev server with Playwright: all 16 status options
+exercised with zero HTTP errors, the `+27` chip opening a modal listing all 31
+skills, the three Cisco searches above, and no "live matches" text left on the
+dashboard.

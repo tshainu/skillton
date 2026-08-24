@@ -34,7 +34,9 @@ export default function MatchingPage() {
   const [result, setResult] = useState<{ scored: number; shortlisted: number; top?: number } | null>(null);
 
   const [skill, setSkill] = useState("");
-  const [minScore, setMinScore] = useState(60);
+  /* Starts at 0 on purpose: defaulting to 60 hid every match in a library whose
+     scores all sit in the 30s and 40s, so a skill search looked broken. */
+  const [minScore, setMinScore] = useState(0);
   const [searchJd, setSearchJd] = useState("");
   const search = useMatchSearch({ skill, minScore, jdId: searchJd, enabled: tab === "search" });
 
@@ -224,7 +226,7 @@ export default function MatchingPage() {
               <Input
                 value={skill}
                 onChange={(e) => setSkill(e.target.value)}
-                placeholder="Skill or technology"
+                placeholder="Skills — comma-separated, e.g. Cisco, Juniper"
                 className="pl-9"
               />
             </div>
