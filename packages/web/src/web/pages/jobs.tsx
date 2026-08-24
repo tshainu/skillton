@@ -124,7 +124,6 @@ export default function JobsPage() {
 
       <div className="rise rise-2 mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Open roles" value={counts.open} icon={Briefcase} tone="primary" />
-        <StatCard label="Live matches" value={totals.matches} hint={`${totals.shortlisted} shortlisted`} icon={Users} tone="success" />
         <StatCard label="Expired scores" value={totals.expired} hint="Excluded from ranking" icon={TimerOff} tone="warning" />
         <StatCard
           label="Unparsed JDs"

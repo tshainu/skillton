@@ -23,7 +23,7 @@ import {
  *
  * JD -> CV ranks the live candidate pool for one job and lets the recruiter push
  * a checked selection straight into HR screening. CV -> JD does the reverse for
- * one candidate, searchable by name, NIC or phone.
+ * one candidate, searchable by name or phone.
  */
 
 type Tab = "jd" | "cv";
@@ -67,7 +67,7 @@ function SearchSelect<T extends { id: string; label: string }>({
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute z-40 mt-1.5 w-full overflow-hidden rounded-lg border border-border bg-[#111] shadow-2xl">
+          <div className="absolute z-[60] mt-1.5 w-full overflow-hidden rounded-lg border border-border bg-[#111] shadow-2xl">
             <div className="relative border-b border-border">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <input
@@ -237,7 +237,7 @@ function JdToCv() {
                   />
                 </Th>
                 <Th>Candidate</Th>
-                <Th>NIC / Phone</Th>
+                <Th>Phone</Th>
                 <Th>Experience</Th>
                 <Th>Match</Th>
                 <Th>Matched skills</Th>
@@ -273,10 +273,7 @@ function JdToCv() {
                       </span>
                     )}
                   </Td>
-                  <Td className="num text-[11px] text-muted-foreground">
-                    {row.nic ?? "—"}
-                    <span className="block">{row.phone ?? ""}</span>
-                  </Td>
+                  <Td className="num text-[11px] text-muted-foreground">{row.phone ?? "—"}</Td>
                   <Td className="num">{row.experienceYears != null ? `${row.experienceYears} yrs` : "—"}</Td>
                   <Td>
                     <ScorePill score={row.score} />
@@ -321,13 +318,11 @@ function CvToJd() {
           query={query}
           onQueryChange={setQuery}
           loading={isLoading}
-          placeholder="Choose a candidate — search by name, NIC or phone number"
+          placeholder="Choose a candidate — search by name or phone number"
           renderOption={(option) => (
             <span className="min-w-0 flex-1 truncate">
               <span className="font-medium">{option.name}</span>
-              <span className="ml-2 text-[11px] text-muted-foreground">
-                {[option.nic, option.phone].filter(Boolean).join(" · ")}
-              </span>
+              <span className="ml-2 text-[11px] text-muted-foreground">{option.phone ?? ""}</span>
             </span>
           )}
         />
@@ -337,7 +332,7 @@ function CvToJd() {
         <EmptyState
           icon={ArrowLeftRight}
           title="Pick a candidate"
-          body="Search by name, NIC or phone number to see the job descriptions they match best."
+          body="Search by name or phone number to see the job descriptions they match best."
         />
       )}
 
@@ -354,9 +349,7 @@ function CvToJd() {
               <div>
                 <p className="font-display text-base font-semibold">{data.candidate.name}</p>
                 <p className="text-[12px] text-muted-foreground">
-                  {[data.candidate.headline, data.candidate.nic, data.candidate.phone]
-                    .filter(Boolean)
-                    .join(" · ")}
+                  {[data.candidate.headline, data.candidate.phone].filter(Boolean).join(" · ")}
                 </p>
               </div>
               <Link href={`/candidates/${data.candidate.id}`}>
@@ -375,7 +368,6 @@ function CvToJd() {
               <tr>
                 <Th>Job description</Th>
                 <Th>Client</Th>
-                <Th>Location</Th>
                 <Th>Match</Th>
                 <Th>Matched skills</Th>
                 <Th>Gaps</Th>
@@ -391,7 +383,6 @@ function CvToJd() {
                     </Link>
                   </Td>
                   <Td className="text-muted-foreground">{row.clientName ?? "—"}</Td>
-                  <Td className="text-muted-foreground">{row.location ?? "—"}</Td>
                   <Td>
                     <ScorePill score={row.score} />
                   </Td>

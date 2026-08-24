@@ -46,7 +46,6 @@ interface UploadItem {
 /** Toggleable columns — each one can be hidden independently. */
 const COLUMNS = [
   { key: "candidate", label: "Candidate", locked: true },
-  { key: "nic", label: "NIC" },
   { key: "phone", label: "Phone" },
   { key: "source", label: "Source" },
   { key: "bucket", label: "Bucket" },
@@ -176,23 +175,27 @@ export default function CandidatesPage() {
         title="Candidate library"
         subtitle="Every CV is parsed into structured data — skills, technologies, experience, education and certifications — then embedded for semantic matching."
         actions={
-          <>
-            {expiredCount > 0 && (
-              <Button variant="outline" onClick={() => rerunExpired.mutate({ limit: 100 })} disabled={rerunExpired.isPending}>
-                {rerunExpired.isPending ? <Spinner /> : <TimerOff className="size-4" />}
-                Re-run {expiredCount} expired
+          /* The blacklist is a record of people we are not working with — it is
+             listing-only, so neither uploading nor re-scoring belongs on it. */
+          tab === "blacklisted" ? null : (
+            <>
+              {expiredCount > 0 && (
+                <Button variant="outline" onClick={() => rerunExpired.mutate({ limit: 100 })} disabled={rerunExpired.isPending}>
+                  {rerunExpired.isPending ? <Spinner /> : <TimerOff className="size-4" />}
+                  Re-run {expiredCount} expired
+                </Button>
+              )}
+              <Button
+                onClick={() => {
+                  setItems([]);
+                  setUploadOpen(true);
+                }}
+                className="glow-primary"
+              >
+                <Upload className="size-4" /> Bulk upload CVs
               </Button>
-            )}
-            <Button
-              onClick={() => {
-                setItems([]);
-                setUploadOpen(true);
-              }}
-              className="glow-primary"
-            >
-              <Upload className="size-4" /> Bulk upload CVs
-            </Button>
-          </>
+            </>
+          )
         }
       />
 
@@ -281,7 +284,7 @@ export default function CandidatesPage() {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name, NIC, phone, email, headline or CV text"
+            placeholder="Search name, phone, email, headline or CV text"
             className="pl-9"
           />
         </div>
@@ -328,17 +331,23 @@ export default function CandidatesPage() {
       {!candidates.isLoading && rows.length === 0 && (
         <EmptyState
           icon={Users}
-          title="No candidates match"
-          body="Upload a batch of CVs (PDF, DOCX or ZIP entries) — Skillton parses each one and detects duplicates automatically."
+          title={tab === "blacklisted" ? "No blacklisted candidates" : "No candidates match"}
+          body={
+            tab === "blacklisted"
+              ? "Candidates you blacklist appear here as a read-only list."
+              : "Upload a batch of CVs (PDF, DOCX or ZIP entries) — Skillton parses each one and detects duplicates automatically."
+          }
           action={
-            <Button
-              onClick={() => {
-                setItems([]);
-                setUploadOpen(true);
-              }}
-            >
-              <Upload className="size-4" /> Bulk upload CVs
-            </Button>
+            tab === "blacklisted" ? null : (
+              <Button
+                onClick={() => {
+                  setItems([]);
+                  setUploadOpen(true);
+                }}
+              >
+                <Upload className="size-4" /> Bulk upload CVs
+              </Button>
+            )
           }
         />
       )}
@@ -348,7 +357,6 @@ export default function CandidatesPage() {
           <thead>
             <tr>
               <Th>Candidate</Th>
-              {show("nic") && <Th className="w-36">NIC</Th>}
               {show("phone") && <Th className="w-36">Phone</Th>}
               {show("source") && <Th className="w-32">Source</Th>}
               {show("bucket") && <Th className="w-28">Bucket</Th>}
@@ -382,7 +390,6 @@ export default function CandidatesPage() {
                     </Badge>
                   )}
                 </Td>
-                {show("nic") && <Td className="num text-[12px]">{c.nic ?? "—"}</Td>}
                 {show("phone") && <Td className="num text-[12px]">{c.phone ?? "—"}</Td>}
                 {show("source") && (
                   <Td className="text-[12px] text-muted-foreground">

@@ -95,7 +95,7 @@ export default function FlaggedPage() {
             <thead>
               <tr>
                 <Th>Candidate</Th>
-                <Th>NIC / Phone</Th>
+                <Th>Phone</Th>
                 <Th>Match</Th>
                 <Th>AI interview</Th>
                 <Th>Technical</Th>
@@ -117,10 +117,7 @@ export default function FlaggedPage() {
                       )}
                     </Link>
                   </Td>
-                  <Td className="num text-[11px] text-muted-foreground">
-                    {row.nic ?? "—"}
-                    <span className="block">{row.phone ?? ""}</span>
-                  </Td>
+                  <Td className="num text-[11px] text-muted-foreground">{row.phone ?? "—"}</Td>
                   <Td>
                     <ScorePill score={row.matchScore} />
                   </Td>

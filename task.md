@@ -695,3 +695,18 @@ Verified end to end against the dev server with Playwright: all 16 status option
 exercised with zero HTTP errors, the `+27` chip opening a modal listing all 31
 skills, the three Cisco searches above, and no "live matches" text left on the
 dashboard.
+
+## Round — Batch A (UI cleanup pass)
+
+Worked through the second half of the user's improvement list, the pure-UI items.
+
+- **"Candidate" → "Candidates"** in the sidebar was already correct (`nav.ts`); nothing to change.
+- **NIC removed everywhere the user listed it**: the Candidates table (column definition, header, cell and the search placeholder), the JD→CV matrix, the Flagged table, and the CV→JD candidate card / search placeholder / option rows. Phone alone identifies a candidate in the UI now. Copy that still mentioned NIC (the CV→JD empty state and the file header comment) was reworded too, since leaving it promises a search that no longer advertises NIC.
+  Deliberately untouched: **Hidden Gems still shows a NIC / Phone column** — it was not on the user's list, so it needs an explicit yes before it goes.
+- **Location column dropped** from the CV→JD table and **the "Live matches" stat card** dropped from Job Descriptions, per the list.
+- **Blacklisted is listing-only.** The header actions ("Re-run N expired", "Bulk upload CVs") are now suppressed on that tab. The first attempt looked like it had failed: an automated check still found "Bulk upload" on the page. It was a *second* button — the empty-state card also offered an upload action. Both the empty state's title, body and action are now tab-aware, so a blacklisted view with no rows says "No blacklisted candidates" instead of inviting an upload.
+- **Selection Reasoning defaults to "Technical depth is reasonable"** on the technical scoring modal (a named constant, applied both to the initial state and on every re-open of the modal so a stale reason from a previous candidate can never carry over).
+- **Bucket labels already render with colour** (`BUCKET_CLASS` in `web/lib/labels.ts`) with the reason as a tooltip; no change needed.
+- **CV→JD search dropdown was rendering behind the candidate card** — its panel was `z-40` against the surrounding chrome, now `z-[60]`.
+
+A note on verification, because it cost time twice: an assertion of `"NIC" in body` is *always* true on the Flagged and Technical screens — **NIC is a substring of TECHNICAL**, which those tables render uppercase. The check now uses a word-boundary match on `main` rather than a substring match on `body`. Two "regressions" this round were this false positive.

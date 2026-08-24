@@ -23,6 +23,9 @@ import { useSettings } from "../queries/insights";
 
 type Tab = "queue" | "completed" | "templates";
 
+/** Pre-filled so the interviewer edits a sentence rather than facing a blank box. */
+const DEFAULT_SELECTION_REASON = "Technical depth is reasonable";
+
 const DEFAULT_SECTIONS =
   "Technical Knowledge|40|Core concepts, Depth, Tooling\nProblem Solving|35|Approach, Edge cases, Debugging\nCommunication|25|Clarity, Collaboration";
 
@@ -114,7 +117,7 @@ export default function TechInterviewsPage() {
   const [templateId, setTemplateId] = useState("");
   const [scores, setScores] = useState<Record<string, Record<string, number>>>({});
   const [comments, setComments] = useState("");
-  const [reason, setReason] = useState("");
+  const [reason, setReason] = useState(DEFAULT_SELECTION_REASON);
   const [recommendation, setRecommendation] = useState<"selected" | "hold" | "rejected">("selected");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ total: number; final: number | null } | null>(null);
@@ -202,7 +205,7 @@ export default function TechInterviewsPage() {
     setActiveId(id);
     setScores({});
     setComments("");
-    setReason("");
+    setReason(DEFAULT_SELECTION_REASON);
     setRecommendation("selected");
     setError(null);
     setResult(null);
