@@ -206,6 +206,62 @@ const DONE_SIGNALS = [
   "that's pretty much it",
   "thats pretty much it",
 ];
+/**
+ * Swearing and abuse the room warns about. Deliberately a short list of
+ * unambiguous words rather than a broad filter: a screening interview is a
+ * stressful hour and a candidate who mutters "damn" while thinking has not done
+ * anything that belongs on a report.
+ *
+ * Matched on whole words only. Substring matching is how a filter tells a
+ * network engineer off for saying "assessment" or "Scunthorpe", which would be
+ * far worse than missing a word.
+ */
+const PROFANITY = [
+  "fuck",
+  "fucking",
+  "fucker",
+  "motherfucker",
+  "shit",
+  "bullshit",
+  "bitch",
+  "bastard",
+  "asshole",
+  "arsehole",
+  "dickhead",
+  "prick",
+  "cunt",
+  "whore",
+  "slut",
+  "wanker",
+  "twat",
+  "retard",
+  "retarded",
+  "nigger",
+  "faggot",
+  "shut up",
+  "idiot",
+  "stupid machine",
+  "useless machine",
+];
+const PROFANITY_RE = new RegExp(
+  `(?:^|[^a-z])(?:${PROFANITY.map((w) => w.replace(/ /g, "\\s+")).join("|")})(?:[^a-z]|$)`,
+  "i",
+);
+/** True when the candidate's words contain unambiguous swearing or abuse. */
+function containsProfanity(text: string) {
+  return PROFANITY_RE.test(text.toLowerCase());
+}
+/**
+ * What the interviewer says the first, second and third time. Gentle first —
+ * most swearing in an interview is frustration at a hard question, not abuse at
+ * the interviewer, and treating it as misconduct would end a viable candidate's
+ * interview over one word. The wording firms up if it keeps happening.
+ */
+const LANGUAGE_WARNINGS = [
+  "Let's keep the language professional, please. Carry on when you're ready.",
+  "I do need to ask you again to keep the language professional. Let's continue.",
+  "Please keep this professional — this is being recorded for the recruitment team. Let's carry on.",
+];
 /** Ways a candidate says they want to stop, which the room must always honour. */
 const STOP_SIGNALS = [
   "i want to stop",
@@ -435,6 +491,13 @@ export default function AiInterviewRoomPage() {
   const lastCandidateText = useRef<string>("");
   /** Set once the candidate has clearly asked to stop, which always ends the call. */
   const stopRequested = useRef<boolean>(false);
+  /**
+   * How many times the candidate has been warned about their language, and when
+   * the last warning went out. Rate-limited: swearing tends to arrive in a burst
+   * inside one answer, and a warning per word would be the interviewer nagging.
+   */
+  const languageWarnings = useRef<number>(0);
+  const lastLanguageWarnAt = useRef<number>(0);
   /** The recruiter's question set, and which of its questions have been asked. */
   const questionsRef = useRef<string[]>([]);
   const askedRef = useRef<Set<number>>(new Set());
@@ -912,6 +975,42 @@ export default function AiInterviewRoomPage() {
       trySpeak();
     },
     [],
+  );
+
+  /**
+   * Handles swearing or abuse from the candidate: one gentle warning, logged for
+   * the recruiter, and the interview carries straight on.
+   *
+   * Deliberately never ends the sitting and never costs the candidate time. Most
+   * swearing in a screening is frustration at a hard question — "oh shit, I've
+   * forgotten the command" — and hanging up on that would throw away a perfectly
+   * employable candidate over one word. The recruiter sees the event on the
+   * report and decides what it was worth; the room's only job is to ask them to
+   * keep it professional and keep the interview moving.
+   */
+  const noteLanguage = useCallback(
+    (text: string) => {
+      if (!containsProfanity(text)) return;
+      /* One warning per burst. Swearing arrives in a run of words inside a
+         single answer, and a warning per word is nagging, not moderating. */
+      if (Date.now() - lastLanguageWarnAt.current < 20_000) return;
+      lastLanguageWarnAt.current = Date.now();
+      const index = Math.min(languageWarnings.current, LANGUAGE_WARNINGS.length - 1);
+      languageWarnings.current += 1;
+      flagsRef.current.add("inappropriate_language");
+      proctor.mutate({
+        token,
+        kind: "inappropriate_language",
+        detail: `Warned about inappropriate language (warning ${languageWarnings.current})`,
+        awaySeconds: 0,
+        flags: ["inappropriate_language"],
+      });
+      /* The banner carries it silently; `warn` speaks the same words verbatim
+         once the candidate has stopped talking, so the correction never lands on
+         top of the answer it is about. */
+      warn(LANGUAGE_WARNINGS[index]!);
+    },
+    [proctor, token, warn],
   );
 
   /**
@@ -1862,6 +1961,11 @@ export default function AiInterviewRoomPage() {
             if (STOP_SIGNALS.some((signal) => lowered.includes(signal))) {
               stopRequested.current = true;
             }
+            /* Swearing or abuse: warned gently, logged, and the interview
+               continues. Checked here rather than left to the model so the
+               warning is consistent and always reaches the recruiter's report,
+               and so it happens whatever the model decides to do about it. */
+            noteLanguage(text);
           }
           /* Still on the opening handshake: this reply decides whether the
              interview starts or the candidate is asked to fix their audio. */

@@ -473,3 +473,32 @@ question 5 was never asked and the grader then recorded it as "not asked" with
 coverage 0 — scoring a candidate on a question they were never given. It also
 ended sittings in ~2 minutes against a 10-15 minute window. The cap now clears a
 standard five-question set and still guards an oversized one.
+
+## Round: swearing gets one gentle warning, not a hang-up
+
+The candidate's language is now handled by the room rather than left to the
+model's judgement, so the response is consistent and always reaches the
+recruiter.
+
+`containsProfanity()` matches a short list of unambiguous words on WHOLE WORDS
+only — substring matching is how a filter tells a network engineer off for saying
+"assessment", which would be far worse than missing a word. "damn" and "hell" are
+deliberately not on the list: a candidate muttering while they think has done
+nothing that belongs on a report.
+
+On a hit, `noteLanguage()` shows the banner immediately, logs a new
+`inappropriate_language` proctor event (added to the `z.enum` in
+`api/routes/ai-interviews.ts` — JSON column, no migration), and routes the
+spoken line through `warn()` so it waits for a gap instead of landing on top of
+the answer it is about. Rate-limited to one warning per 20 seconds: swearing
+arrives in a burst inside a single answer, and a warning per word is nagging.
+
+Three escalating lines in `LANGUAGE_WARNINGS`, gentle first ("Let's keep the
+language professional, please. Carry on when you're ready."), firmer if it keeps
+happening. It never ends the sitting, never costs the candidate time, and never
+changes their score — the recruiter sees the event and decides what it was worth.
+
+The prompt gained a matching block so the model behaves the same way if it reacts
+first: one calm sentence, then straight back to the question. Explicitly banned —
+repeating the word back, lecturing, acting offended, threatening to end the
+interview, swearing back, or letting it affect the assessment.

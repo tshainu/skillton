@@ -1101,6 +1101,10 @@ export const aiInterviews = {
              the room refused. Logged because premature wrapping is intermittent
              and otherwise leaves no trace. */
           "premature_close_blocked",
+          /* The candidate swore or used abusive language. Logged for the
+             recruiter's judgement, never acted on automatically: a single
+             frustrated word is not misconduct, and the room only warns. */
+          "inappropriate_language",
         ]),
         detail: z.string().max(300).optional(),
         awaySeconds: z.number().min(0).max(3600).default(0),
