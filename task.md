@@ -329,3 +329,58 @@ time a scored question lands.
   otherwise have ticked real questions off the set.
 
 Shipped as `026fbe8`; deployed and confirmed on the VPS.
+
+## Round: app-owned completion, answer-completion state machine, warm acknowledgements
+
+Against the 17-section spec in `pasted-1_g6Do0J.txt`.
+
+**§1, §13 — the interview can no longer end itself.** `end_interview` used to set
+`completionRequested` directly, so the model closed the call whenever it felt
+done; the only guard was a 60-second floor. All requests now go through the one
+authoritative `requestCompletion(source)`, which refuses while any question in
+the set is unasked and immediately pushes the interviewer back onto the next
+question verbatim. Refusals are logged to `proctorEvents` under the new
+`premature_close_blocked` kind — the bug is intermittent, so it has to leave a
+trace. Only three things get past the gate: a covered set, a candidate who
+explicitly asks to stop (`STOP_SIGNALS`), or a room-forced close (time cap /
+coverage).
+
+**§3, §4, §11, §12 — answer completion is a state, not a guess.** New
+`AnswerState` (`waiting_for_answer` → `candidate_speaking` →
+`possible_answer_end` → `waiting_for_continuation` → `answer_complete`) with
+`beginAnswerCycle()`, `assessAnswer()`, `completeAnswer()` and
+`answerCompleteness()`. An utterance ending on a connector, preposition or
+filler (`TRAILING_WORDS`), or under four words with no terminal punctuation, is
+treated as mid-thought: the answer is held open for `CONTINUATION_WAIT_MS`, then
+gets exactly one gentle "Take your time — would you like to carry on?" at
+`CONTINUATION_CHECK_IN_MS`, and only then closes as `continuation_timeout`.
+Explicit `DONE_SIGNALS` close it immediately as
+`explicit_candidate_completion`.
+
+**§7 — no re-asking a question they are already answering.** The silence nudge
+now returns early while the state is `candidate_speaking` or
+`waiting_for_continuation`; that path is owned by the continuation watchdog.
+Prompt gained `NEVER RE-ASK A QUESTION THEY ARE ALREADY ANSWERING`.
+
+**§2, §5, §8, §9, §10 — acknowledgements.** `CASUAL WARMTH — ALLOWED, BUT KNOW
+THE LIMIT` is replaced by `ACKNOWLEDGE EVERY ANSWER`, requiring one short
+varied acknowledgement that names back something the candidate actually said,
+fused into the same turn as the next question. This deliberately reverses the
+earlier three-word/four-extra-words cap. The guardrails that survive: no verdict
+on the answer or the candidate, no saying what was missing, no adding facts,
+tools or examples they did not say, no teaching or correcting. Appreciate the
+example, never grade the person. Two `BANNED BEHAVIOUR` bullets were narrowed to
+match instead of contradicting it.
+
+**§14, §15 — logging.** Every state transition logs to the console as
+`[interview:answer]`, every completion decision as `[interview:completion]`, and
+each answer files an `AnswerCycle` into `answerLog` with question index, speech
+start/stop, possible-end, completed-at, reason, transcript and check-in count.
+
+Not done: `create_response` stays `true` on the Realtime session, so the model's
+own semantic VAD still opens each turn — the room supervises rather than driving
+every response. Flipping it would make the app fully authoritative per §4 but
+rewires every turn in a live product; not worth it unless the supervision proves
+insufficient. §16's ten acceptance interviews can only be run by a human.
+
+Shipped as `cb08237`; deployed and confirmed on the VPS.
