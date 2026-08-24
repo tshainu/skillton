@@ -6,6 +6,7 @@ import * as schema from "../database/schema";
 import { newId } from "../lib/ids";
 import { embed } from "../lib/embeddings";
 import { isExpired, daysUntilExpiry } from "../lib/scoring";
+import { resolveSkillClasses } from "../lib/skill-class";
 import {
   buildMatch,
   explainInBackground,
@@ -77,7 +78,18 @@ export const matching = {
       }
 
       const targets = pool.filter((c) => !existingIds.has(c.id));
-      const opts = { threshold: settings.shortlistThreshold, expiryDays: settings.scoreExpiryDays };
+      /* Resolve the skill taxonomy once for the whole run — soft skills and role
+         context must not be scored, and one cached lookup covers every pair. */
+      const classes = await resolveSkillClasses([
+        ...(job.parsed?.skills ?? job.skillsRequired ?? []),
+        ...(job.parsed?.technologies ?? []),
+        ...targets.flatMap((c) => [...(c.skillsExtracted ?? []), ...(c.technologies ?? [])]),
+      ]);
+      const opts = {
+        threshold: settings.shortlistThreshold,
+        expiryDays: settings.scoreExpiryDays,
+        classes,
+      };
 
       /* Pass 1 — deterministic scoring for the whole pool, entirely in memory. */
       const built = targets.map((candidate) => buildMatch(context.agencyId, job, candidate, opts));
@@ -178,7 +190,19 @@ export const matching = {
           ),
         );
 
-      const opts = { threshold: settings.shortlistThreshold, expiryDays: settings.scoreExpiryDays };
+      const classes = await resolveSkillClasses([
+        ...openJobs.flatMap((j) => [
+          ...(j.parsed?.skills ?? j.skillsRequired ?? []),
+          ...(j.parsed?.technologies ?? []),
+        ]),
+        ...(candidate.skillsExtracted ?? []),
+        ...(candidate.technologies ?? []),
+      ]);
+      const opts = {
+        threshold: settings.shortlistThreshold,
+        expiryDays: settings.scoreExpiryDays,
+        classes,
+      };
       const built = openJobs.map((job) => buildMatch(context.agencyId, job, candidate, opts));
       const ranked = [...built].sort((a, b) => b.score - a.score);
       await persistMatches(built.map((b) => b.values));
@@ -229,6 +253,12 @@ export const matching = {
       const built = buildMatch(context.agencyId, job, candidate, {
         threshold: settings.shortlistThreshold,
         expiryDays: settings.scoreExpiryDays,
+        classes: await resolveSkillClasses([
+          ...(job.parsed?.skills ?? job.skillsRequired ?? []),
+          ...(job.parsed?.technologies ?? []),
+          ...(candidate.skillsExtracted ?? []),
+          ...(candidate.technologies ?? []),
+        ]),
       });
       await explainMatches([built]);
       await persistMatches([built.values]);
@@ -270,6 +300,14 @@ export const matching = {
       const jobsById = new Map(jobRows.map((j) => [j.id, j]));
       const candidatesById = new Map(candidateRows.map((c) => [c.id, c]));
 
+      const classes = await resolveSkillClasses([
+        ...jobRows.flatMap((j) => [
+          ...(j.parsed?.skills ?? j.skillsRequired ?? []),
+          ...(j.parsed?.technologies ?? []),
+        ]),
+        ...candidateRows.flatMap((c) => [...(c.skillsExtracted ?? []), ...(c.technologies ?? [])]),
+      ]);
+
       const rows: MatchInsert[] = [];
       for (const row of stale) {
         const job = jobsById.get(row.jdId);
@@ -279,6 +317,7 @@ export const matching = {
           buildMatch(context.agencyId, job, candidate, {
             threshold: settings.shortlistThreshold,
             expiryDays: settings.scoreExpiryDays,
+            classes,
           }).values,
         );
       }

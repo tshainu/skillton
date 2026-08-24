@@ -226,6 +226,52 @@ export async function explainMatch(input: ExplainInput) {
   }
 }
 
+const skillClassSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        skill: z.string(),
+        class: z.enum(["core", "soft", "context"]),
+      }),
+    )
+    .default([]),
+});
+
+/**
+ * Classify skill strings the rule layers could not place. Only reached for
+ * genuinely novel strings, and the caller caches every answer, so this runs once
+ * per unique skill in the lifetime of the system.
+ */
+export async function classifySkillStrings(skills: string[]) {
+  const { object } = await generateObject({
+    model: gateway(PARSE_MODEL),
+    schema: skillClassSchema,
+    prompt: dedent`
+      You are classifying strings that a CV/job-description parser extracted as
+      "skills". Assign exactly one class to each, and return every input string
+      verbatim.
+
+      core    A technology, platform, protocol, tool, or a technical activity
+              performed on one. Includes technical process work an IT service
+              provider bills for: documentation, root-cause analysis, incident
+              troubleshooting, ticket handling and escalation.
+      soft    A behavioural, interpersonal or communication trait. Teamwork,
+              written or spoken communication, customer service, time
+              management, attention to detail, mentoring, adaptability.
+      context Not a skill at all. Seniority or level statements, years of
+              experience, employment logistics (shift times, time zones, remote
+              working, visas), qualifications, or a restatement of the job title.
+
+      When a string mentions a named technology, prefer core.
+      When genuinely undecidable, answer core.
+
+      STRINGS:
+      ${skills.map((s, i) => `${i + 1}. ${s}`).join("\n")}
+    `,
+  });
+  return object.items;
+}
+
 /** Free-form generation helper used by reports and the AI interview grader. */
 export async function generatePlainText(prompt: string, model = REASON_MODEL): Promise<string> {
   const { text } = await generateText({ model: gateway(model), prompt });

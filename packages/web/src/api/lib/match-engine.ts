@@ -10,6 +10,7 @@ import { newId } from "./ids";
 import { cosine } from "./embeddings";
 import { computeMatchScore, expiryFor, overlap } from "./scoring";
 import { explainMatch } from "./ai-extract";
+import { coreSkills, resolveSkillClasses, type SkillMap } from "./skill-class";
 
 export type MatchInsert = typeof schema.cvJdMatches.$inferInsert;
 
@@ -32,13 +33,22 @@ export function buildMatch(
   agencyId: string,
   job: typeof schema.jobDescriptions.$inferSelect,
   candidate: typeof schema.candidates.$inferSelect,
-  opts: { threshold: number; expiryDays: number },
+  opts: { threshold: number; expiryDays: number; classes?: SkillMap },
 ): BuiltMatch {
-  const requiredSkills = job.parsed?.skills ?? job.skillsRequired ?? [];
-  const requiredTech = job.parsed?.technologies ?? [];
+  /**
+   * Soft skills and role context ("Teamwork", "Level 2 support experience") are
+   * dropped before anything is compared. Leaving them in punished every
+   * candidate for not literally restating a JD sentence, and rewarded whoever
+   * happened to write "Teamwork" on their CV.
+   */
+  const requiredSkills = coreSkills(job.parsed?.skills ?? job.skillsRequired, opts.classes);
+  const requiredTech = coreSkills(job.parsed?.technologies, opts.classes);
   const requiredCerts = job.parsed?.certifications ?? [];
 
-  const candidateSkills = [...(candidate.skillsExtracted ?? []), ...(candidate.technologies ?? [])];
+  const candidateSkills = coreSkills(
+    [...(candidate.skillsExtracted ?? []), ...(candidate.technologies ?? [])],
+    opts.classes,
+  );
 
   const skills = overlap(requiredSkills, candidateSkills);
   const tech = overlap(requiredTech, candidateSkills);

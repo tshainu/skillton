@@ -10,6 +10,7 @@ import { ScorePill } from "@/components/ui/score";
 import { EmptyState } from "@/components/ui/feedback";
 import { cn } from "@/lib/utils";
 import { BUCKET_CLASS, isBucket, titleCase } from "@/lib/labels";
+import { coreSkills } from "@/lib/skill-class";
 import {
   useCandidateOptions,
   useCandidatesForJd,
@@ -193,7 +194,7 @@ function JdToCv() {
               {data.job.location && (
                 <span className="text-xs text-muted-foreground">{data.job.location}</span>
               )}
-              <ChipList items={data.job.skillsRequired.slice(0, 6)} max={6} />
+              <ChipList items={coreSkills(data.job.skillsRequired).slice(0, 6)} max={6} />
             </div>
             <Button
               size="sm"
@@ -279,7 +280,7 @@ function JdToCv() {
                     <ScorePill score={row.score} />
                   </Td>
                   <Td>
-                    <ChipList items={row.skillsMatched} max={4} tone="matched" />
+                    <ChipList items={coreSkills(row.skillsMatched)} max={4} tone="matched" />
                   </Td>
                   <Td>
                     {/* Always the candidate's real pipeline status — a past HR
@@ -359,7 +360,7 @@ function CvToJd() {
               </Link>
             </div>
             <div className="mt-3">
-              <ChipList items={data.candidate.skills.slice(0, 12)} max={12} />
+              <ChipList items={coreSkills(data.candidate.skills).slice(0, 12)} max={12} />
             </div>
           </Card>
 
@@ -387,10 +388,10 @@ function CvToJd() {
                     <ScorePill score={row.score} />
                   </Td>
                   <Td>
-                    <ChipList items={row.skillsMatched} max={4} tone="matched" />
+                    <ChipList items={coreSkills(row.skillsMatched)} max={4} tone="matched" />
                   </Td>
                   <Td>
-                    <ChipList items={row.skillsMissing} max={3} tone="missing" />
+                    <ChipList items={coreSkills(row.skillsMissing)} max={3} tone="missing" />
                   </Td>
                   <Td>
                     <StatusBadge status={row.status} />

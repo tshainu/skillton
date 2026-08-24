@@ -5,6 +5,7 @@ import { db } from "../database";
 import * as schema from "../database/schema";
 import { embed } from "../lib/embeddings";
 import { buildMatch, persistMatches, poolFilter } from "../lib/match-engine";
+import { resolveSkillClasses } from "../lib/skill-class";
 import { audit, authed, getSettings, timeline } from "../middleware/auth";
 
 /**
@@ -118,11 +119,19 @@ export const matrix = {
       }
 
       const pool = await db.select().from(schema.candidates).where(poolFilter(context.agencyId));
+      /* Soft skills and role context are excluded from scoring — resolved once
+         for the whole pool so the ranking costs no extra round trips. */
+      const classes = await resolveSkillClasses([
+        ...(job.parsed?.skills ?? job.skillsRequired ?? []),
+        ...(job.parsed?.technologies ?? []),
+        ...pool.flatMap((c) => [...(c.skillsExtracted ?? []), ...(c.technologies ?? [])]),
+      ]);
       const built = pool
         .map((candidate) =>
           buildMatch(context.agencyId, job, candidate, {
             threshold: settings.shortlistThreshold,
             expiryDays: settings.scoreExpiryDays,
+            classes,
           }),
         )
         .sort((a, b) => b.score - a.score);
@@ -208,11 +217,20 @@ export const matrix = {
         .where(eq(schema.clients.agencyId, context.agencyId));
       const clientName = new Map(clientRows.map((c) => [c.id, c.companyName]));
 
+      const classes = await resolveSkillClasses([
+        ...jobs.flatMap((j) => [
+          ...(j.parsed?.skills ?? j.skillsRequired ?? []),
+          ...(j.parsed?.technologies ?? []),
+        ]),
+        ...(candidate.skillsExtracted ?? []),
+        ...(candidate.technologies ?? []),
+      ]);
       const built = jobs
         .map((job) =>
           buildMatch(context.agencyId, job, candidate, {
             threshold: settings.shortlistThreshold,
             expiryDays: settings.scoreExpiryDays,
+            classes,
           }),
         )
         .sort((a, b) => b.score - a.score);

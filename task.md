@@ -710,3 +710,75 @@ Worked through the second half of the user's improvement list, the pure-UI items
 - **CV→JD search dropdown was rendering behind the candidate card** — its panel was `z-40` against the surrounding chrome, now `z-[60]`.
 
 A note on verification, because it cost time twice: an assertion of `"NIC" in body` is *always* true on the Flagged and Technical screens — **NIC is a substring of TECHNICAL**, which those tables render uppercase. The check now uses a word-boundary match on `main` rather than a substring match on `body`. Two "regressions" this round were this false positive.
+
+## Round — Batch C: the skills taxonomy
+
+Skills are now classified before they are shown or scored. Built once, in one
+module, and applied to every surface — the whole point was that four screens
+must not each grow their own idea of what a skill is.
+
+**The data forced a design change.** I probed the live database first: **606
+distinct skill strings**. The extractor is not emitting tags, it is emitting
+sentences — "Ability to work remotely during Australian Eastern business hours",
+"Level 1.5, Level 2, service-desk, or internal IT support experience". A fixed
+exclusion list cannot work against that, because every new CV invents new
+strings. So classification is a function, not a list.
+
+It also revealed a **third class** neither of us had named. Alongside `core` and
+`soft` there is `context`: seniority statements, years of experience, employment
+logistics, qualifications. These pollute skill matching exactly like soft skills
+do, but calling "5 years MSP experience" a soft skill would be wrong on screen
+and would corrupt any later soft-skill reporting. Confirmed with the user, who
+took the third class.
+
+**Three layers, cheapest first** (`api/lib/skill-taxonomy.ts` for the rules,
+`api/lib/skill-class.ts` for the cache and model):
+
+1. A curated map of every ambiguous string actually in the database — free and
+   deterministic, and the place to record any correction.
+2. Regex rules. `context` patterns run *before* `soft` ones, because "Ability to
+   communicate clearly" is an employment requirement phrased as an ability and
+   reading it as a soft skill would put a whole sentence in the soft-skill list.
+   A named-technology token anywhere in the string forces `core` even when a soft
+   pattern also fires — "Stakeholder communication about Azure outages" is really
+   about Azure.
+3. One model call for what the rules genuinely cannot place, cached in the new
+   `skill_classes` table keyed by the normalised string. Each unique skill costs
+   one call once, ever. A gateway failure caches nothing, so a transient error
+   can never permanently mislabel a skill.
+
+**Uncertain means `core`, deliberately.** A misfiled technology that stays
+visible is a cosmetic annoyance; a technology wrongly hidden silently loses a
+real match.
+
+**The user's original instinct was overridden on three groups, with their
+agreement.** Documentation, root-cause analysis and ticket handling all *read*
+like soft skills, but in an MSP they are billable competencies that the JDs
+require by name. They stay `core`, visible and scored. English and customer
+service stay `soft`.
+
+**Scoring now excludes `soft` and `context` on both sides** — the JD's
+requirements and the candidate's skills. Previously every candidate was punished
+for not literally restating a JD sentence, and whoever wrote "Teamwork" on their
+CV was rewarded for it. The taxonomy is resolved **once per run** and passed into
+`buildMatch`, which stays pure and synchronous, so a full-pool ranking costs no
+extra round trips.
+
+**Running the rules over all 606 real strings caught two defects before they
+shipped**, which is why that check was worth writing:
+
+- `Enterprise Wi-Fi architectures (desirable knowledge)` came out `context` — a
+  real technical skill about to be hidden. Two causes: the normalisation strips
+  the hyphen from "Wi-Fi" so the technology token never matched, and "desirable"
+  was being treated as a context marker when it is only an annotation on a real
+  skill. `Ruckus (desirable)` is still Ruckus.
+- `Collaborative coding` came out `soft` on the word "collaborative", despite
+  being about code.
+
+Final split: 557 core, 30 soft, 19 context, with 253 strings deferred to the
+cached model pass. Verified in the browser: no soft or context string leaks into
+the chips on Candidates, the JD→CV matrix, or a JD detail page.
+
+Not built, by agreement: the admin screen for hand-reclassifying a skill. The
+`setSkillClass()` helper it needs already exists, with `manual` beating both the
+rules and the model. That is its own next piece of work.

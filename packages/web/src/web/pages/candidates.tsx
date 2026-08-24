@@ -36,6 +36,7 @@ import { useSetBlacklisted } from "../queries/talent";
 import { cn } from "../lib/utils";
 import { BUCKET_CLASS, isBucket, SOURCE_LABEL, titleCase } from "../lib/labels";
 import { CANDIDATE_STATUSES } from "../lib/candidate-status";
+import { coreSkills } from "../lib/skill-class";
 
 interface UploadItem {
   filename: string;
@@ -416,7 +417,7 @@ export default function CandidatesPage() {
                 {show("skills") && (
                   <Td>
                     <div className="max-w-[280px]">
-                      <ChipList items={c.skillsExtracted ?? []} max={4} />
+                      <ChipList items={coreSkills(c.skillsExtracted)} max={4} />
                     </div>
                   </Td>
                 )}

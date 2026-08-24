@@ -698,4 +698,22 @@ export const backupSchedules = sqliteTable("backup_schedules", {
   lastError: text("last_error"),
 });
 
+/* --------------------------------------------------------- skill taxonomy */
+
+/**
+ * Cache of the skill taxonomy decision for one normalised skill string, so a
+ * string the model had to classify is only ever classified once. `source` is
+ * `llm` for a model answer and `manual` for a human override, which always wins.
+ */
+export const skillClasses = sqliteTable("skill_classes", {
+  skillKey: text("skill_key").primaryKey(),
+  label: text("label").notNull(),
+  /** core | soft | context */
+  skillClass: text("skill_class").notNull().default("core"),
+  /** llm | manual */
+  source: text("source").notNull().default("llm"),
+  createdAt: timestamp("created_at").notNull().$defaultFn(now),
+  updatedAt: timestamp("updated_at").notNull().$defaultFn(now),
+});
+
 export const sqlNow = sql;

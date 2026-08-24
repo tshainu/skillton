@@ -21,6 +21,7 @@ import { useJob, useJobMatches, useReparseJob, useUpdateJob } from "../queries/j
 import { useRerunMatch, useRunMatchForJob, useToggleShortlist } from "../queries/matching";
 import { openDocument, useSetCandidateStatus } from "../queries/candidates";
 import { useSettings } from "../queries/insights";
+import { coreSkills } from "../lib/skill-class";
 
 export default function JobDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
@@ -243,7 +244,7 @@ export default function JobDetailPage() {
                           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-success">
                             Matched
                           </p>
-                          <ChipList items={row.match.skillsMatched ?? []} tone="matched" max={8} />
+                          <ChipList items={coreSkills(row.match.skillsMatched)} tone="matched" max={8} />
                         </div>
                       )}
                       {(row.match.skillsMissing ?? []).length > 0 && (
@@ -251,7 +252,7 @@ export default function JobDetailPage() {
                           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-destructive">
                             Missing
                           </p>
-                          <ChipList items={row.match.skillsMissing ?? []} tone="missing" max={8} />
+                          <ChipList items={coreSkills(row.match.skillsMissing)} tone="missing" max={8} />
                         </div>
                       )}
                     </div>
@@ -346,7 +347,7 @@ export default function JobDetailPage() {
                   <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     Required skills
                   </p>
-                  <ChipList items={data.skillsRequired ?? []} max={20} />
+                  <ChipList items={coreSkills(data.skillsRequired)} max={20} />
                 </div>
               )}
               <dl className="space-y-1.5">
