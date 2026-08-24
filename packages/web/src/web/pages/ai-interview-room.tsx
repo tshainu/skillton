@@ -285,7 +285,7 @@ export default function AiInterviewRoomPage() {
    * model this turned into it asking the candidate what its own first question
    * was, so the room drives each turn with the literal words to say.
    */
-  const openingStage = useRef<"audio_check" | "interviewing">("audio_check");
+  const openingStage = useRef<"audio_check" | "warm_up_how" | "warm_up_work" | "interviewing">("audio_check");
   /** Unclear replies to the audio check, so the room stops asking eventually. */
   const audioCheckTries = useRef<number>(0);
   /** The recruiter's question set, and which of its questions have been asked. */
@@ -654,6 +654,15 @@ export default function AiInterviewRoomPage() {
            yet — and it is where the candidate heard instruction-speak. */
         if (openingStage.current === "audio_check") {
           speakIfSilent("Sorry, I didn't catch that — can you hear me clearly?");
+          return;
+        }
+        /* Mid warm-up, the only thing outstanding is the easy question the room
+           just asked, so repeat that one rather than talking about a question
+           set that has not been opened yet. */
+        if (openingStage.current !== "interviewing") {
+          speakIfSilent(
+            openingStage.current === "warm_up_how" ? warmUpHowLine() : warmUpWorkLine(),
+          );
           return;
         }
         channel.send(
@@ -1098,8 +1107,42 @@ export default function AiInterviewRoomPage() {
     }
 
     /* Confirmed (or unreadable twice, which is not worth a third round trip).
-       The first question is handed over verbatim so it cannot be paraphrased,
-       announced or described. */
+       The interview does not start here: two easy warm-up questions come first,
+       so the candidate is already talking by the time question one lands. */
+    openingStage.current = "warm_up_how";
+    speakIfSilent(warmUpHowLine());
+  }
+
+  /** Warm-up one: how they are doing, by first name. Not scored, not from the set. */
+  function warmUpHowLine() {
+    const person = interview.data?.candidate;
+    const name = person?.firstName?.trim();
+    return `Great${name ? `, ${name}` : ""} — how are you doing today?`;
+  }
+
+  /**
+   * Warm-up two: one easy question about their current working life, the sort of
+   * thing two professionals trade before a meeting starts. Deliberately broad so
+   * it fits any discipline, and deliberately fixed so it cannot drift into a
+   * real interview question or leak a hint about the set.
+   */
+  function warmUpWorkLine() {
+    return "Good to hear. Before we get into it — what's the biggest challenge you're dealing with in your current role at the moment?";
+  }
+
+  /**
+   * Drives the two warm-up turns and then hands over to the interview. Each turn
+   * is spoken by the room word for word: left to the model, "make small talk"
+   * becomes a third and fourth question and a discussion of the answer.
+   */
+  function handleWarmUpReply() {
+    if (openingStage.current === "warm_up_how") {
+      openingStage.current = "warm_up_work";
+      speakIfSilent(warmUpWorkLine());
+      return;
+    }
+    /* Warm-up done. The first question is handed over verbatim so it cannot be
+       paraphrased, announced or described. */
     openingStage.current = "interviewing";
     const first = questionsRef.current[0];
     speakIfSilent(
@@ -1155,6 +1198,10 @@ export default function AiInterviewRoomPage() {
    */
   function noteCoverage(spoken: string) {
     if (!spoken.trim() || questionsRef.current.length === 0) return;
+    /* Nothing said before the interview proper counts — the greeting, the audio
+       check and the two warm-up questions all end in "?" and must never tick a
+       question off the set. */
+    if (openingStage.current !== "interviewing") return;
     /* Only the NEXT unasked question can be credited, only from an utterance
        that actually contains a question, and only one per utterance.
        Previously every question was scored against every utterance, so a
@@ -1385,6 +1432,9 @@ export default function AiInterviewRoomPage() {
           /* Still on the opening handshake: this reply decides whether the
              interview starts or the candidate is asked to fix their audio. */
           if (text && openingStage.current === "audio_check") handleAudioCheckReply(text);
+          /* Warm-up: their answer is the cue for the next warm-up turn, and
+             then for the interview itself. */
+          else if (text && openingStage.current !== "interviewing") handleWarmUpReply();
         }
       } catch {
         /* ignore non-JSON frames */
