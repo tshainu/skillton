@@ -303,3 +303,29 @@ Convention applied wherever the room has to speak into a candidate's turn: apolo
 
 - Verified: typecheck / check-conventions / build all pass; Playwright loaded dashboard, ai-interviews and candidates with zero console and zero page errors.
 - NOT verifiable here: all of it is live-call behaviour. Needs a real interview where the candidate asks outright for the answer and refuses to take no for an answer.
+
+## Round: warm-up before the interview proper
+
+The interview used to jump from the audio check straight into question one. Now
+two easy questions sit in between, so the candidate is already talking by the
+time a scored question lands.
+
+- `api/lib/interview-prompt.ts` — the "they can hear you" branch no longer says
+  "Okay, let's start the interview"; it hands over to a new `WARM-UP — EXACTLY
+  TWO EASY QUESTIONS, THEN THE INTERVIEW` block. Warm-up questions are not from
+  the numbered set, spend no follow-up budget, are not scored, and get no more
+  than a three-word acknowledgement. Question two is loosely tied to the job
+  title when one is known. Capped at about a minute, because it comes out of the
+  interview clock.
+- `web/pages/ai-interview-room.tsx` — `openingStage` gains `warm_up_how` and
+  `warm_up_work`. The room speaks both lines verbatim (`warmUpHowLine()`,
+  `warmUpWorkLine()`) and `handleWarmUpReply()` advances on the candidate's
+  reply, because "make small talk" left to the model becomes a third and fourth
+  question plus a discussion of the answers.
+- The silence nudge mid warm-up repeats the warm-up question instead of talking
+  about a question set that has not been opened yet.
+- `noteCoverage()` now returns early unless the stage is `interviewing`. The
+  greeting, the audio check and both warm-up lines all end in "?" and would
+  otherwise have ticked real questions off the set.
+
+Shipped as `026fbe8`; deployed and confirmed on the VPS.
