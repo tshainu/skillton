@@ -823,3 +823,35 @@ jobs or pages") and opening the command palette. And the assertion for "Open
 roles" failed against a working screen, because the heading is uppercased in CSS
 and `inner_text` returns `OPEN ROLES`. Same class of mistake as the NIC/TECHNICAL
 false positive earlier: never assume letter case in an assertion about this app.
+
+## Batch D follow-up — Hidden Gems tidy, and a re-score that found something else
+
+Two loose ends from the last round, both taken on my own recommendation.
+
+**NIC / Phone is gone from Hidden Gems.** It was the one screen the improvement
+list didn't mention, which is exactly why it had to change: Batch A removed the
+identity columns everywhere else, and leaving one table showing a national ID
+number is worse than never having removed any of them. Consistency here is a
+privacy property, not a cosmetic one.
+
+**The 49 stored matches were re-scored under the new skill taxonomy — and every
+single score came back identical, to the decimal.** That is the useful result.
+The theory was that scoring whole soft-skill sentences was dragging the whole
+pool into the 30-59 band. It was not. Soft and context strings never matched on
+either side, so dropping them changed no numerator and no denominator that
+mattered.
+
+Diagnosing where the ceiling actually is: the base component is
+`similarity * 100 * 0.75`, and real CV-vs-JD cosine similarity on this data sits
+at 0.545-0.568, so base lands at 41-43 out of a possible 75. Add the best
+realistic bonuses — skills 6.4, experience 3, education 2.5, location 3 — and
+the strongest pair in the database tops out at 55.8. The shortlist threshold is
+65. **Nothing in this pool can ever be shortlisted, and nothing is: 0 rows.**
+
+So the flat band was never a taxonomy bug, and it is not a data problem either.
+It is a calibration problem: cosine similarity between two long documents about
+the same job clusters around 0.5, and the formula treats 0.5 as half a match
+when it is in fact a strong one. Fixing it means either rescaling similarity over
+its real range or moving the threshold, and both change the meaning of every
+score, tag and bucket in the product — so it is going to the user as a decision
+rather than being quietly changed under them.

@@ -105,7 +105,6 @@ export default function HiddenGemsPage() {
               <thead>
                 <tr>
                   <Th>Candidate</Th>
-                  <Th>NIC / Phone</Th>
                   <Th>Experience</Th>
                   <Th>Match</Th>
                   <Th>Technical</Th>
@@ -124,10 +123,6 @@ export default function HiddenGemsPage() {
                           <span className="block text-[11px] text-muted-foreground">{row.headline}</span>
                         )}
                       </Link>
-                    </Td>
-                    <Td className="num text-[11px] text-muted-foreground">
-                      {row.nic ?? "—"}
-                      <span className="block">{row.phone ?? ""}</span>
                     </Td>
                     <Td className="num">{row.experienceYears != null ? `${row.experienceYears} yrs` : "—"}</Td>
                     <Td>
