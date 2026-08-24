@@ -782,3 +782,44 @@ the chips on Candidates, the JD→CV matrix, or a JD detail page.
 Not built, by agreement: the admin screen for hand-reclassifying a skill. The
 `setSkillClass()` helper it needs already exists, with `manual` beating both the
 rules and the model. That is its own next piece of work.
+
+## Batch D, part one — clients derived from job titles
+
+The clients table was empty, and three separate items on the list (18-20) were
+blocked on it: a client's open roles, the client name on a JD, and the Client
+column elsewhere. Asking the agency to retype every company was not the fix —
+they were already typing it, in the JD title: `L2 Systems Support Engineer -
+(Unified IT)`.
+
+So `api/lib/client-link.ts` reads it back out. Three guards make that safe:
+
+- `clientKey()` ignores case, punctuation and company suffixes (ltd, pvt, pty,
+  group, co), so "The Living Co", "The Living Co." and "The Living Company"
+  resolve to one record instead of three.
+- A `NOT_A_COMPANY` pattern rejects the parentheticals that are not companies —
+  remote, hybrid, contract, senior, Colombo, Australia, bare numbers. Without
+  it, "Systems Engineer (Remote)" would have created a client called Remote.
+- `linkJobToClient()` never overwrites a link a human made. An existing
+  `clientId` always wins over anything derived.
+
+Anything the title cannot give us falls back to `companyName` on the parsed JD,
+where the extractor is told never to guess and never to return the agency's own
+name. Derived clients are created as `prospect` with a note saying the details
+need confirming, so a machine-made record cannot quietly enter active reporting
+as though someone had qualified it.
+
+"Derive from JDs" on the Clients header runs the scan over every JD and is safe
+to re-run. On the real data it resolved all 7 JDs to 5 clients with no model call
+at all.
+
+A client's roles are **split, not filtered**: open roles are listed, and closed
+and filled ones sit behind a toggle. Hiding them entirely would have thrown away
+the history that makes a client record worth having — Unified IT's only role is
+filled, and a client whose card looked empty would read as a dead account.
+
+What verification caught this round was a test bug, twice, not a product bug.
+`button` matching "Jobs" was hitting the topbar search box ("Search candidates,
+jobs or pages") and opening the command palette. And the assertion for "Open
+roles" failed against a working screen, because the heading is uppercased in CSS
+and `inner_text` returns `OPEN ROLES`. Same class of mistake as the NIC/TECHNICAL
+false positive earlier: never assume letter case in an assertion about this app.
