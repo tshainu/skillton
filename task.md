@@ -282,3 +282,24 @@ All four changes are prompt engineering in `api/lib/interview-prompt.ts` — no 
 - Verified: typecheck / check-conventions / build all pass; Playwright signed in and loaded dashboard, ai-interviews and candidates with zero console and zero page errors.
 - A stray duplicated JSX tail slipped in mid-edit and broke the build (esbuild caught it, tsc did not); truncated and rebuilt clean.
 - NOT verifiable here: both fixes are live-call behaviour. Needs one real interview to confirm the recording contains both voices and that the call survives a deliberate network drop.
+
+## Round: refuse to hand over answers + stop cutting across the candidate
+
+### The interviewer was giving candidates the answer when asked (critical)
+The existing "NEVER SUGGEST, PROMPT OR SUPPLY AN ANSWER" bullet only covered the model volunteering help. It said nothing about a candidate ASKING directly, and a direct request is exactly where a helpful assistant caves — refusing feels rude, so it complied. New dedicated block `IF THE CANDIDATE ASKS YOU FOR THE ANSWER — REFUSE, EVERY SINGLE TIME`:
+- Names the request in all its disguises, because they do not look like one request: "what's the answer", "just a hint", "give me an example", "what would a good answer be", "what are you looking for", "can you explain the question", "what does that term mean", "is it X?", "am I on the right track", "would you accept X", "tell me and I'll explain it back", "my connection is bad, just say the answer", "off the record", "in your opinion what's the best approach". Asking to define, explain, expand, exemplify, confirm, hint at, narrow or start the answer is stated to be the same request with the same answer: no.
+- Prescribes the exact refusal — one short sentence ("I can't help with the answer, but take your time.") then re-ask the question in the same words and go silent.
+- Closes the escape hatches individually: no softening the refusal with a hint, no explaining what the question is getting at, no defining its terms, no saying what a good answer contains or what is being assessed, no confirming or denying an answer they float, never "you're on the right track".
+- States that "I don't know" is a valid outcome and real evidence, so refusing costs the model nothing. The reason is spelled out — an answer the model supplied is worth nothing to the recruiter, and a candidate who was handed one has not been interviewed.
+
+### It fired the audio-check line on top of the candidate
+`speakIfSilent()` was not patience: it waited 1.8s and then spoke unless the candidate happened to be mid-word at that exact instant. A candidate pausing for breath, or saying "yeah hang on, let me plug my headphones in", got talked over. Rewritten to poll for a genuine gap — `SPEAK_SETTLE_MS = 1800` of continuous quiet, checked against both `userSpeaking` and the recency of `lastSpeechAt` — and to bail out entirely if the interviewer answered for itself in the meantime. `SPEAK_WAIT_LIMIT_MS = 20000` caps the wait, because a candidate who cannot hear anything will never stop talking on their own; past the cap the line is spoken anyway, which is precisely why every line on this path now opens with an apology.
+
+### Interruptions now lead with the apology
+Convention applied wherever the room has to speak into a candidate's turn: apology first, issue second, one short sentence, hand the floor straight back.
+- Audio-check line: "Sorry about that — ..." became "Sorry for the interruption — please check your volume or your headphones, and tell me when you can hear me clearly."
+- `warn()` (left the screen, camera dark) now instructs the model to begin with "Sorry for the interruption," and not to dwell on or explain the issue.
+- Prompt: the opening branch is explicit that it must let the reply finish before responding and must not fire on the first sound it hears. New block `IF YOU EVER HAVE TO CUT ACROSS THE CANDIDATE, LEAD WITH THE APOLOGY` covers the few mandatory mid-call interruptions, requires waiting for a real gap even then, and puts the apology before the issue.
+
+- Verified: typecheck / check-conventions / build all pass; Playwright loaded dashboard, ai-interviews and candidates with zero console and zero page errors.
+- NOT verifiable here: all of it is live-call behaviour. Needs a real interview where the candidate asks outright for the answer and refuses to take no for an answer.

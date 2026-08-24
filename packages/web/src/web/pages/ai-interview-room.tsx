@@ -108,6 +108,20 @@ const ABANDONED_LIMIT_MS = 4 * 60_000;
 /** Grace the candidate gets to fix a missing camera or microphone. */
 const DEVICE_SETUP_SECONDS = 60;
 /**
+ * Continuous silence from the candidate before the room will speak a scripted
+ * line into the call. A single short delay was not patience — it fired whether
+ * or not the candidate was still talking, which is how the audio-check line
+ * ended up landing on top of them.
+ */
+const SPEAK_SETTLE_MS = 1_800;
+/**
+ * How long a scripted line is held back waiting for a gap. Past this the line
+ * matters more than the wait — a candidate who cannot hear anything will not
+ * stop talking on their own — so it is spoken anyway, and every line that can
+ * reach this path opens with an apology for the interruption.
+ */
+const SPEAK_WAIT_LIMIT_MS = 20_000;
+/**
  * Shown to the candidate for any interview-room failure. The real provider error
  * (expired key, no credits, network) is never useful to them and must not leak,
  * so it is sent to the super admin instead.
@@ -1072,7 +1086,7 @@ export default function AiInterviewRoomPage() {
     if (verdict === "no") {
       audioCheckTries.current = 0;
       speakIfSilent(
-        "Sorry about that — please check your volume or your headphones, and tell me when you can hear me clearly.",
+        "Sorry for the interruption — please check your volume or your headphones, and tell me when you can hear me clearly.",
       );
       return;
     }
@@ -1097,16 +1111,41 @@ export default function AiInterviewRoomPage() {
   }
 
   /**
-   * Says a line only if the interviewer has not started speaking on its own
-   * within a beat — a fallback for a model that stays silent, never a second
-   * voice on top of one that answered properly.
+   * Says a line only once the candidate has genuinely stopped talking, and only
+   * if the interviewer has not answered for itself in the meantime.
+   *
+   * The old version simply waited 1.8s and then spoke unless the candidate
+   * happened to be mid-word at that exact instant. That is not listening: a
+   * candidate who paused for breath, or who was still saying "hang on, let me
+   * plug my headphones in", got talked over. Now the line waits for a real gap,
+   * and only interrupts once the wait limit is gone — which is why every line
+   * routed through here opens by apologising for the interruption.
    */
   function speakIfSilent(line: string, andThen = "") {
-    window.setTimeout(() => {
-      if (endingRef.current) return;
-      if (aiSpeaking.current || pendingAi.current.trim() || userSpeaking.current) return;
+    const waitingSince = Date.now();
+    let quietSince = 0;
+    const tick = () => {
+      if (endingRef.current || phaseRef.current === "done") return;
+      /* The interviewer said it itself — nothing to add, and saying it again
+         would be a second voice on top of a turn that already worked. */
+      if (aiSpeaking.current || pendingAi.current.trim()) return;
+      const outOfPatience = Date.now() - waitingSince > SPEAK_WAIT_LIMIT_MS;
+      const talking = userSpeaking.current || Date.now() - lastSpeechAt.current < SPEAK_SETTLE_MS;
+      if (talking && !outOfPatience) {
+        quietSince = 0;
+        window.setTimeout(tick, 400);
+        return;
+      }
+      if (!outOfPatience) {
+        if (!quietSince) quietSince = Date.now();
+        if (Date.now() - quietSince < SPEAK_SETTLE_MS) {
+          window.setTimeout(tick, 400);
+          return;
+        }
+      }
       speakExactly(line, andThen);
-    }, 1800);
+    };
+    window.setTimeout(tick, 900);
   }
 
   /**
