@@ -56,6 +56,8 @@ export const settings = {
         aiSmallTalkEnabled: z.boolean().optional(),
         /** Realtime interviewer voice id — validated against the voice catalogue. */
         aiVoice: z.string().refine(isSupportedVoice, "Unsupported interviewer voice").optional(),
+        /** Which interviewer profile runs the call — see api/lib/voice-profiles. */
+        aiVoiceProfile: z.enum(["original", "test"]).optional(),
         aiProctoringEnabled: z.boolean().optional(),
         aiAwayPenaltyMultiplier: z.number().min(0).max(10).optional(),
         /* ---- buckets ---- */

@@ -22,6 +22,16 @@ type Tab = "scoring" | "interview" | "security" | "team" | "tags" | "audit";
 
 const ROLES = ["super_admin", "agency_admin", "recruiter", "tech_interviewer", "client", "candidate"];
 
+/**
+ * Kept in the page rather than imported from the API profile catalogue: that
+ * module pulls in the prompt builders, which must never reach the browser
+ * bundle.
+ */
+const PROFILE_HINTS: Record<string, string> = {
+  original: "Recruiter's question set (max 6), warm acknowledgements, 2 follow-ups per interview.",
+  test: "Fixed five IT scenarios, neutral acknowledgements, 1.5s transitions, one clarification per question.",
+};
+
 export default function SettingsPage() {
   const settings = useSettings();
   const update = useUpdateSettings();
@@ -313,6 +323,33 @@ export default function SettingsPage() {
                   label="Open with friendly small talk before the first question"
                 />
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div>
+                <CardTitle>Interviewer profile</CardTitle>
+                <p className="text-[12px] text-muted-foreground">
+                  Which script the AI voice interviewer runs. Original Voice is the production interviewer and asks the
+                  recruiter&apos;s own question set. Test Voice is the experimental five-question IT screening with
+                  stricter no-interrupt pacing. Switching takes effect on the next interview — no deploy needed.
+                </p>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <Field label="Active profile" hint={PROFILE_HINTS[field("aiVoiceProfile", values.aiVoiceProfile)]}>
+                <Select
+                  disabled={!isAdmin}
+                  value={field("aiVoiceProfile", values.aiVoiceProfile)}
+                  onChange={(e) =>
+                    setDraft({ ...draft, aiVoiceProfile: e.target.value as "original" | "test" })
+                  }
+                >
+                  <option value="original">Original Voice</option>
+                  <option value="test">Test Voice</option>
+                </Select>
+              </Field>
             </CardContent>
           </Card>
 

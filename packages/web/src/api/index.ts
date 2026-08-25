@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { createApp } from "./__core/app";
 import { buildCopilot } from "./agent/copilot";
 import { auth } from "./auth";
-import { buildInterviewInstructions, interviewQuestions } from "./lib/interview-prompt";
+import { profileInstructions, profileQuestions, resolveVoiceProfile } from "./lib/voice-profiles";
 import { resolveVoice } from "./lib/voices";
 import { resolveQuestionSet } from "./routes/question-sets";
 import { getSettings as getAgencySettings } from "./middleware/auth";
@@ -194,9 +194,10 @@ app.post("/api/ai-interview/session", async (c) => {
   /* Hard cap enforced here, not by instruction: the model only ever sees the
      questions it is allowed to ask, and the room's coverage auto-end counts the
      same sliced list. */
-  const askQuestions = interviewQuestions(questionSet?.questions ?? []);
+  const voiceProfile = resolveVoiceProfile(settings.aiVoiceProfile);
+  const askQuestions = profileQuestions(voiceProfile, questionSet?.questions ?? []);
 
-  const instructions = buildInterviewInstructions({
+  const instructions = profileInstructions(voiceProfile, {
     candidateName: candidate ? `${candidate.firstName} ${candidate.lastName ?? ""}`.trim() : "the candidate",
     candidateHeadline: candidate?.headline ?? null,
     candidateSkills: candidate?.skillsExtracted ?? [],

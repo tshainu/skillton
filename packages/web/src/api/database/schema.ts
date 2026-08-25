@@ -63,6 +63,12 @@ export interface AgencySettings {
   aiSmallTalkEnabled: boolean;
   /** Realtime interviewer voice id — see api/lib/voices.ts for the catalogue. */
   aiVoice: string;
+  /**
+   * Which interviewer profile runs the AI voice interview:
+   * "original" = the long-standing production prompt, "test" = the
+   * experimental five-question spec. See api/lib/voice-profiles/index.ts.
+   */
+  aiVoiceProfile: "original" | "test";
   /** Require camera + record the interview, and watch for fraud signals. */
   aiProctoringEnabled: boolean;
   /** Seconds deducted from the interview clock per second spent off-tab. */
@@ -100,6 +106,7 @@ export const DEFAULT_AGENCY_SETTINGS: AgencySettings = {
   aiSilenceNudgeSeconds: 10,
   aiSmallTalkEnabled: true,
   aiVoice: DEFAULT_AI_VOICE,
+  aiVoiceProfile: "original",
   aiProctoringEnabled: true,
   aiAwayPenaltyMultiplier: 2,
   defaultCurrency: "LKR",
