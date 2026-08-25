@@ -893,3 +893,45 @@ education, employment type, created date, source document, certifications and th
 first five responsibilities — all already parsed, none of it previously visible,
 so answering "what does this role actually ask for?" meant opening the JD every
 time. One card open at a time; the list stays a scanning view.
+
+## Round — two named voice profiles: Original Voice and Test Voice
+
+**The point of this round is reversibility, so the original prompt was not
+touched.** `api/lib/interview-prompt.ts` is byte for byte what it was; it simply
+is not selected when Test Voice is active. Nothing rewrites, patches or
+regenerates it, so "switch back to the original voice" is provably lossless
+rather than a reconstruction from memory. The new spec lives beside it in
+`api/lib/voice-profiles/test.ts`, and `api/lib/voice-profiles/index.ts` picks
+between the two.
+
+**The switch is an agency setting, not a constant.** `aiVoiceProfile` in
+`agencies.settings` (JSON, so no migration) defaults to `"original"`, and a
+"Interviewer profile" card in Settings flips it live. A hardcoded constant would
+have meant a deploy for every A/B swap, which defeats the purpose of calling one
+of them a test.
+
+**The question list is chosen by the profile, not just capped by it.**
+`profileQuestions()` returns the definitive list the model was given, so the
+room's coverage auto-end and the grader count exactly what was asked. Test Voice
+ignores `ai_question_sets` entirely and asks its five fixed IT scenarios — the
+spec is being tested as written, not as adapted to our data.
+
+**Four places the spec contradicted decisions already live, settled explicitly
+rather than silently.** (1) Question source, above. (2) Acknowledgements: the
+original profile acknowledges warmly, the spec bans technical judgment; Test
+Voice keeps a neutral rotation with no verdict but allows one warm word, because
+a metronome is its own kind of bad interview. (3) Follow-ups: the original has a
+budget of 2 for the whole interview, the spec allows one clarification plus one
+"anything to add?" per question; implemented per question as specified with a
+ceiling of 5 clarifications overall, and the "anything else?" check-in is not
+counted because its job is to stop the interviewer interrupting. (4) The spec
+hardcodes the name "Max" in the greeting and closing — templated to the real
+candidate.
+
+**Cross-chat memory could not be used.** `memory_edit` rejected ~16 consecutive
+writes with a type-validation error, so the durability the agency asked for is
+carried by the repo instead: both profiles are permanent files with the conflicts
+documented in `test.ts`, which is a better record than a memory bullet anyway.
+
+Verified in the browser: the card renders, defaults to Original Voice, saves,
+survives a reload, and was set back to Original Voice afterwards.
