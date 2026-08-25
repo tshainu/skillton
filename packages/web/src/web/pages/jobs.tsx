@@ -14,6 +14,7 @@ import { ScorePill } from "../components/ui/score";
 import { useClients } from "../queries/clients";
 import { useCreateJob, useDeleteJob, useJobs, useReparseJob } from "../queries/jobs";
 import { uploadFile } from "../queries/candidates";
+import { formatDate } from "../lib/labels";
 
 type Filter = "open" | "on_hold" | "filled" | "closed" | "all";
 
@@ -29,6 +30,8 @@ export default function JobsPage() {
   const remove = useDeleteJob();
 
   const [open, setOpen] = useState(false);
+  /* Only one card's detail is open at a time — the list is the scanning view. */
+  const [detailOpen, setDetailOpen] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [form, setForm] = useState({
@@ -200,6 +203,76 @@ export default function JobsPage() {
                   <span className="px-1 text-[11px] text-muted-foreground">
                     +{(job.skillsRequired ?? []).length - 7}
                   </span>
+                )}
+              </div>
+            )}
+
+            {/* Everything the parser already knows, one click away. The card used
+                to show a title and a skill row, so answering "what does this
+                role actually ask for?" meant opening the JD every time. */}
+            {job.isParsed && (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => setDetailOpen(detailOpen === job.id ? null : job.id)}
+                  className="text-[11.5px] text-primary-light hover:underline"
+                >
+                  {detailOpen === job.id ? "Hide detail" : "Full detail"}
+                </button>
+                {detailOpen === job.id && (
+                  <div className="mt-2.5 space-y-2.5 rounded-lg border border-border bg-white/[0.02] p-3">
+                    {job.parsed?.summary && (
+                      <p className="text-[12px] leading-relaxed text-muted-foreground">
+                        {job.parsed.summary}
+                      </p>
+                    )}
+                    <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11.5px] text-muted-foreground">
+                      {job.parsed?.minExperienceYears != null && (
+                        <span>
+                          Min experience{" "}
+                          <span className="num text-foreground/80">
+                            {job.parsed.minExperienceYears} yrs
+                          </span>
+                        </span>
+                      )}
+                      {job.parsed?.education && (
+                        <span>
+                          Education <span className="text-foreground/80">{job.parsed.education}</span>
+                        </span>
+                      )}
+                      {job.employmentType && (
+                        <span>
+                          Type <span className="text-foreground/80">{job.employmentType}</span>
+                        </span>
+                      )}
+                      <span>
+                        Created <span className="text-foreground/80">{formatDate(job.createdAt)}</span>
+                      </span>
+                      {job.jdFileName && (
+                        <span className="truncate">
+                          Document <span className="text-foreground/80">{job.jdFileName}</span>
+                        </span>
+                      )}
+                    </div>
+                    {(job.parsed?.certifications ?? []).length > 0 && (
+                      <p className="text-[11.5px] text-muted-foreground">
+                        Certifications{" "}
+                        <span className="text-foreground/80">
+                          {(job.parsed?.certifications ?? []).join(", ")}
+                        </span>
+                      </p>
+                    )}
+                    {(job.parsed?.responsibilities ?? []).length > 0 && (
+                      <ul className="space-y-1 text-[11.5px] leading-snug text-muted-foreground">
+                        {(job.parsed?.responsibilities ?? []).slice(0, 5).map((r) => (
+                          <li key={r} className="flex gap-1.5">
+                            <span className="text-primary/70">·</span>
+                            <span>{r}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                 )}
               </div>
             )}

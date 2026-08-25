@@ -855,3 +855,41 @@ when it is in fact a strong one. Fixing it means either rescaling similarity ove
 its real range or moving the threshold, and both change the meaning of every
 score, tag and bucket in the product — so it is going to the user as a decision
 rather than being quietly changed under them.
+
+## Batch D, part two — the list views answer the question being asked
+
+Four items, all the same underlying complaint: a screen showed a number or a
+label that was not the thing the reader needed.
+
+**Flagged: "Tag" is now "Selected for" (item 24).** The queue exists because a
+client is deciding on one candidate for one specific role, and the column in
+that position was showing the colour bucket — true, but not an answer to
+"selected for what?". It now shows the JD title and its client, linked, with the
+bucket tag kept underneath rather than thrown away. The JD comes from the
+technical interview, because that is the stage that raises the flag; a client
+interview row is the fallback for anyone flagged before the technical round
+started recording a JD.
+
+**Dashboard funnel cards are links (item 31).** A count that cannot be opened
+makes the reader go and rebuild the same filter by hand somewhere else, and that
+is where trust in a dashboard goes. Stages that own a screen open that screen,
+because that is where the actions for the stage live; Sourced and AI Shortlisted
+deep-link into the candidate list. That needed the candidate list to read
+`?status=` — it only had local state before — and unknown values are ignored
+rather than passed to the server, which would 400 exactly the way the status
+filter did before Batch B fixed it.
+
+**Expired scores show staleness, not a lapse date (item 22).** `staleBandLabel()`
+buckets to "> 1 month" through "> 1 year". A recruiter looking at an expired
+score is deciding whether to re-run it or whether the CV is too old to trust, and
+"lapsed 14 Feb" makes them do that arithmetic themselves. The row now collapses
+to the band and expands for the dates, the candidate link and the re-run button,
+so a long expired list stays scannable. **Not verified in the browser**: the
+re-score earlier this session pushed every match's expiry 60 days out, so there
+is currently no expired row anywhere to render. Typechecked and built only.
+
+**JD cards have a "Full detail" toggle (item 21).** Summary, minimum experience,
+education, employment type, created date, source document, certifications and the
+first five responsibilities — all already parsed, none of it previously visible,
+so answering "what does this role actually ask for?" meant opening the JD every
+time. One card open at a time; the list stays a scanning view.

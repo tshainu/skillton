@@ -114,6 +114,26 @@ export function formatNumber(value: number | null | undefined, suffix = ""): str
   return `${rounded.toLocaleString()}${suffix}`;
 }
 
+/**
+ * How stale an expired score is, as a band rather than a date.
+ *
+ * A recruiter looking at an expired score does not need to know it lapsed on
+ * 14 Feb — they need to know whether it is worth re-running or whether the CV
+ * itself is now too old to trust. Bands answer that in one glance; the exact
+ * date is still available when the row is expanded.
+ */
+export function staleBandLabel(value: Date | string | null | undefined): string {
+  if (!value) return "Expired";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "Expired";
+  const months = (Date.now() - date.getTime()) / (30 * 86_400_000);
+  if (months >= 12) return "> 1 year";
+  if (months >= 6) return "> 6 months";
+  if (months >= 3) return "> 3 months";
+  if (months >= 1) return "> 1 month";
+  return "< 1 month";
+}
+
 export function formatDate(value: Date | string | null | undefined): string {
   if (!value) return "—";
   const date = value instanceof Date ? value : new Date(value);

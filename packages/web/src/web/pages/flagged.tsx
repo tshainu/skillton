@@ -100,7 +100,7 @@ export default function FlaggedPage() {
                 <Th>AI interview</Th>
                 <Th>Technical</Th>
                 <Th>Final</Th>
-                <Th>Tag</Th>
+                <Th>Selected for</Th>
                 <Th>Client fails</Th>
                 <Th>Last outcome</Th>
                 <Th className="text-right">Action</Th>
@@ -153,18 +153,34 @@ export default function FlaggedPage() {
                   <Td>
                     <ScorePill score={row.finalScore} />
                   </Td>
+                  {/* The role this candidate is actually being decided on. The
+                      bucket tag stays underneath it — useful, but it was never
+                      the answer to "selected for what?". */}
                   <Td>
-                    {isBucket(row.bucket) ? (
+                    {row.jdTitle ? (
+                      <Link
+                        href={`/jobs/${row.jdId}`}
+                        className="block max-w-[210px] text-[12px] font-medium leading-tight hover:text-primary"
+                      >
+                        {row.jdTitle}
+                        {row.jdClientName && (
+                          <span className="mt-0.5 block text-[10.5px] font-normal text-muted-foreground">
+                            {row.jdClientName}
+                          </span>
+                        )}
+                      </Link>
+                    ) : (
+                      <span className="text-[11px] text-muted-foreground">No JD recorded</span>
+                    )}
+                    {isBucket(row.bucket) && (
                       <span
                         className={cn(
-                          "inline-block rounded border px-1.5 py-0.5 text-[10px]",
+                          "mt-1 inline-block rounded border px-1.5 py-0.5 text-[10px]",
                           BUCKET_CLASS[row.bucket],
                         )}
                       >
                         {titleCase(row.bucket)}
                       </span>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
                     )}
                   </Td>
                   <Td>

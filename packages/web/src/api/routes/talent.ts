@@ -257,6 +257,48 @@ export const talent = {
     const lastByCandidate = new Map<string, (typeof interviews)[number]>();
     for (const i of interviews) if (!lastByCandidate.has(i.candidateId)) lastByCandidate.set(i.candidateId, i);
 
+    /* The role a flagged candidate was selected for is the point of this queue:
+       a client is deciding on them for one specific JD, not in the abstract.
+       The technical interview is the authoritative source because that is the
+       stage that flags them; a client interview row is the fallback for anyone
+       flagged before the technical round recorded a JD. */
+    const techJd = ids.length
+      ? await db
+          .select({
+            candidateId: schema.interviewsTechnical.candidateId,
+            jdId: schema.interviewsTechnical.jdId,
+            conductedAt: schema.interviewsTechnical.conductedAt,
+          })
+          .from(schema.interviewsTechnical)
+          .where(inArray(schema.interviewsTechnical.candidateId, ids))
+          .orderBy(desc(schema.interviewsTechnical.conductedAt))
+      : [];
+    const jdByCandidate = new Map<string, string>();
+    for (const r of techJd) {
+      if (r.jdId && !jdByCandidate.has(r.candidateId)) jdByCandidate.set(r.candidateId, r.jdId);
+    }
+    for (const i of interviews) {
+      if (i.jdId && !jdByCandidate.has(i.candidateId)) jdByCandidate.set(i.candidateId, i.jdId);
+    }
+    const jdIds = [...new Set(jdByCandidate.values())];
+    const jdRows = jdIds.length
+      ? await db
+          .select({
+            id: schema.jobDescriptions.id,
+            title: schema.jobDescriptions.title,
+            clientId: schema.jobDescriptions.clientId,
+          })
+          .from(schema.jobDescriptions)
+          .where(inArray(schema.jobDescriptions.id, jdIds))
+      : [];
+    const clientRows = jdRows.length
+      ? await db
+          .select({ id: schema.clients.id, companyName: schema.clients.companyName })
+          .from(schema.clients)
+          .where(eq(schema.clients.agencyId, context.agencyId))
+      : [];
+    const jdById = new Map(jdRows.map((j) => [j.id, j]));
+
     return {
       failLimit: settings.clientFailLimit,
       rows: rows.map((c) => {
@@ -287,6 +329,11 @@ export const talent = {
               : null,
           lastFeedback: lastByCandidate.get(c.id)?.feedback ?? null,
           lastOutcomeAt: lastByCandidate.get(c.id)?.createdAt ?? null,
+          jdId: jdByCandidate.get(c.id) ?? null,
+          jdTitle: jdById.get(jdByCandidate.get(c.id) ?? "")?.title ?? null,
+          jdClientName:
+            clientRows.find((cl) => cl.id === jdById.get(jdByCandidate.get(c.id) ?? "")?.clientId)
+              ?.companyName ?? null,
         };
       }),
     };

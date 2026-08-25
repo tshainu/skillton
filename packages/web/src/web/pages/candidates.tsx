@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Link } from "wouter";
+import { Link, useSearch } from "wouter";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -70,8 +70,17 @@ const STATUS_OPTIONS = ["", ...CANDIDATE_STATUSES];
 export default function CandidatesPage() {
   const confirm = useConfirm();
   const toast = useToast();
+  /* The dashboard funnel links straight in with ?status=..., so a recruiter who
+     clicks "AI Shortlisted" lands on that filter already applied instead of on
+     the unfiltered list, having to reproduce the filter by hand. Unknown values
+     are ignored rather than sent to the server, which would 400. */
+  const initialStatus = new URLSearchParams(useSearch()).get("status") ?? "";
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState(
+    CANDIDATE_STATUSES.includes(initialStatus as (typeof CANDIDATE_STATUSES)[number])
+      ? initialStatus
+      : "",
+  );
   const [skill, setSkill] = useState("");
   const [minExp, setMinExp] = useState("");
   const [tab, setTab] = useState<"active" | "blacklisted">("active");

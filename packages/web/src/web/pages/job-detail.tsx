@@ -22,6 +22,7 @@ import { useRerunMatch, useRunMatchForJob, useToggleShortlist } from "../queries
 import { openDocument, useSetCandidateStatus } from "../queries/candidates";
 import { useSettings } from "../queries/insights";
 import { coreSkills } from "../lib/skill-class";
+import { formatDate, staleBandLabel } from "../lib/labels";
 
 export default function JobDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
@@ -35,6 +36,8 @@ export default function JobDetailPage() {
   const toggleShortlist = useToggleShortlist();
   const setStatus = useSetCandidateStatus();
   const [error, setError] = useState<string | null>(null);
+  /* Expired rows collapse to an age band; only the one being acted on expands. */
+  const [openExpired, setOpenExpired] = useState<string | null>(null);
   const [runResult, setRunResult] = useState<string | null>(null);
 
   const ranked = matches.data?.ranked ?? [];
@@ -303,29 +306,65 @@ export default function JobDetailPage() {
                 title={`Expired scores (${expired.length})`}
                 hint="These candidates stay in your library, but their scores are withheld and excluded from ranking and search until re-run."
               />
+              {/* An expired score is not a number any more, so it is shown as how
+                  stale it is — "> 6 months" answers "is this worth re-running?"
+                  where a lapse date does not. The row expands for the detail and
+                  the re-run button, so a long expired list stays scannable. */}
               <div className="space-y-2.5">
-                {expired.map((row) => (
-                  <Card key={row.match.id} className="p-4">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <ScoreRing score={null} size={44} />
-                      <div className="min-w-0 flex-1">
-                        <Link to={`/candidates/${row.candidate.id}`}>
-                          <p className="truncate text-[13.5px] font-medium text-muted-foreground line-through decoration-muted-foreground/50 hover:text-foreground">
+                {expired.map((row) => {
+                  const isOpen = openExpired === row.match.id;
+                  return (
+                    <Card key={row.match.id} className="p-0">
+                      <button
+                        type="button"
+                        onClick={() => setOpenExpired(isOpen ? null : row.match.id)}
+                        className="flex w-full flex-wrap items-center gap-3 p-4 text-left"
+                      >
+                        <ScoreRing score={null} size={44} />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[13.5px] font-medium text-muted-foreground">
                             {row.candidate.firstName} {row.candidate.lastName}
                           </p>
-                        </Link>
-                        <p className="truncate text-[11.5px] text-muted-foreground">{row.candidate.headline}</p>
-                      </div>
-                      <ExpiredScoreNotice
-                        compact
-                        expiredAt={row.match.expiresAt}
-                        pending={rerun.isPending}
-                        onRerun={() => rerun.mutate({ candidateId: row.candidate.id, jdId: id })}
-                        className="w-full sm:w-auto"
-                      />
-                    </div>
-                  </Card>
-                ))}
+                          <p className="truncate text-[11.5px] text-muted-foreground">
+                            {row.candidate.headline}
+                          </p>
+                        </div>
+                        <span className="flex items-center gap-1.5 rounded-md border border-warning/25 bg-warning/[0.07] px-2 py-1 text-[11.5px] font-medium text-warning">
+                          <TimerOff className="size-3.5" />
+                          {staleBandLabel(row.match.expiresAt)}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {isOpen ? "Hide" : "Detail"}
+                        </span>
+                      </button>
+                      {isOpen && (
+                        <div className="space-y-3 border-t border-border px-4 pb-4 pt-3">
+                          <div className="flex flex-wrap gap-x-6 gap-y-1.5 text-[12px] text-muted-foreground">
+                            <span>
+                              Scored{" "}
+                              <span className="text-foreground/80">{formatDate(row.match.matchedAt)}</span>
+                            </span>
+                            <span>
+                              Lapsed{" "}
+                              <span className="text-foreground/80">{formatDate(row.match.expiresAt)}</span>
+                            </span>
+                            <Link
+                              to={`/candidates/${row.candidate.id}`}
+                              className="text-primary-light hover:underline"
+                            >
+                              Open candidate
+                            </Link>
+                          </div>
+                          <ExpiredScoreNotice
+                            expiredAt={row.match.expiresAt}
+                            pending={rerun.isPending}
+                            onRerun={() => rerun.mutate({ candidateId: row.candidate.id, jdId: id })}
+                          />
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })}
               </div>
             </div>
           )}

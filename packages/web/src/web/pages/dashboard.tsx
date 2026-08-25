@@ -35,6 +35,23 @@ import { useMe, useSeedDemo } from "../queries/session";
 
 const AXIS = { stroke: "#5f5f5f", fontSize: 11, fontFamily: "JetBrains Mono" };
 
+/**
+ * Where each funnel stage opens. Stages that own a screen go to that screen,
+ * because it carries the actions for that stage; the two that do not deep-link
+ * into the candidate list with the status filter pre-applied. Keys match
+ * `FUNNEL` in `api/routes/dashboard.ts` — a new stage there without an entry
+ * here falls back to the unfiltered list rather than breaking the card.
+ */
+const FUNNEL_LINK: Record<string, string> = {
+  sourced: "/candidates?status=new",
+  shortlisted: "/candidates?status=shortlisted",
+  hr: "/screening",
+  ai: "/ai-interviews",
+  tech: "/tech-interviews",
+  review: "/flagged",
+  hired: "/placed",
+};
+
 function ChartTooltip() {
   return (
     <Tooltip
@@ -139,26 +156,32 @@ export default function DashboardPage() {
             />
           </div>
 
-          {/* Funnel */}
+          {/* Funnel — every card is a way in. A number on a dashboard that cannot
+              be opened forces the reader to go and rebuild the same filter by
+              hand somewhere else, which is where the trust in it goes. Stages
+              that own a screen link to that screen; the rest deep-link into the
+              candidate list with the status filter already applied. */}
           <div className="rise rise-3">
-            <SectionTitle title="Recruitment funnel" hint="Candidates by current pipeline stage" />
+            <SectionTitle title="Recruitment funnel" hint="Candidates by stage — click a stage to open it" />
             <div className="grid gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
               {data.funnel.map((step, i) => {
                 const max = Math.max(...data.funnel.map((s) => s.count), 1);
                 return (
-                  <Card key={step.key} hover className="p-4">
-                    <p className="num text-[10px] text-muted-foreground/70">
-                      {String(i + 1).padStart(2, "0")}
-                    </p>
-                    <p className="num mt-1 font-display text-[26px] font-bold leading-none">{step.count}</p>
-                    <p className="mt-1.5 text-[12px] leading-snug text-muted-foreground">{step.label}</p>
-                    <Meter
-                      value={step.count}
-                      max={max}
-                      color={i === data.funnel.length - 1 ? "#10b981" : "#ff6b2b"}
-                      className="mt-3"
-                    />
-                  </Card>
+                  <Link key={step.key} to={FUNNEL_LINK[step.key] ?? "/candidates"} className="block">
+                    <Card hover className="h-full p-4 transition-colors hover:border-primary/40">
+                      <p className="num text-[10px] text-muted-foreground/70">
+                        {String(i + 1).padStart(2, "0")}
+                      </p>
+                      <p className="num mt-1 font-display text-[26px] font-bold leading-none">{step.count}</p>
+                      <p className="mt-1.5 text-[12px] leading-snug text-muted-foreground">{step.label}</p>
+                      <Meter
+                        value={step.count}
+                        max={max}
+                        color={i === data.funnel.length - 1 ? "#10b981" : "#ff6b2b"}
+                        className="mt-3"
+                      />
+                    </Card>
+                  </Link>
                 );
               })}
             </div>
